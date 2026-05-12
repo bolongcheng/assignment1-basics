@@ -13,6 +13,7 @@ UTF8_VOCAB_SIZE = 256
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 CHECKPOINT_ITERS = 2000
 
+
 def byte_pair_freq_counter(pre_tok_counter: dict[tuple[bytes, ...], int]) -> dict[tuple[bytes, ...], int]:
     counts = Counter()
     for pre_tok_tuple, count in pre_tok_counter.items():
@@ -55,8 +56,10 @@ def process_chunk(args: tuple[str, int, int, list[str]]) -> Counter:
         # Run pre-tokenization on your chunk and store the counts for each pre-token
         sub_chunks = re.split(special_token_pat, chunk)
         for sub_chunk in sub_chunks:
-            pre_tokens = re.finditer(PAT, sub_chunk) # stream everything
-            pre_tok_counter += Counter(tuple(pre_tok.group(0).encode(ENCODE_FMT, errors="replace")) for pre_tok in pre_tokens)
+            pre_tokens = re.finditer(PAT, sub_chunk)  # stream everything
+            pre_tok_counter += Counter(
+                tuple(pre_tok.group(0).encode(ENCODE_FMT, errors="replace")) for pre_tok in pre_tokens
+            )
     return pre_tok_counter
 
 
@@ -68,11 +71,10 @@ def get_pre_token_counter(
     with open(input_path, "rb") as f:
         num_processes = max(1, os.cpu_count())
         boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
-        chunk_size = max(1, (boundaries[-1] - boundaries[0]) // (20 * num_processes))
 
         args = [(input_path, start, end, special_tokens) for start, end in zip(boundaries[:-1], boundaries[1:])]
         with ProcessPoolExecutor(max_workers=num_processes) as executor:
-            counters = list(tqdm(executor.map(process_chunk, args, chunksize=chunk_size), total=len(args), desc="Pretokenizing"))
+            counters = list(tqdm(executor.map(process_chunk, args), total=len(args), desc="Pretokenizing"))
 
     return sum(counters, Counter())
 
@@ -82,7 +84,7 @@ def train_bpe(
     vocab_size: int,
     special_tokens: list[str],
     verbose: bool = False,
-    save_checkpoint: bool = False
+    save_checkpoint: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
 
     vocab: dict[int, bytes] = {}
@@ -110,7 +112,8 @@ def train_bpe(
                 json.dump({v.decode(ENCODE_FMT, errors="replace"): k for k, v in vocab.items()}, f, indent=2)
             with open(f"./data/owt-merges-checkpoint-{i}.txt", "w") as f:
                 for merge in merges:
-                    f.write(f"{merge[0].decode(ENCODE_FMT, errors="replace")} {merge[1].decode(ENCODE_FMT, errors="replace")}\n")
-            
+                    f.write(
+                        f"{merge[0].decode(ENCODE_FMT, errors='replace')} {merge[1].decode(ENCODE_FMT, errors='replace')}\n"
+                    )
 
     return vocab, merges
