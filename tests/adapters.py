@@ -669,7 +669,7 @@ def run_train_bpe(
 
     for i in range(num_merges):
         counts = byte_pair_freq_counter(pre_tok_counter)
-        byte_pair = max(counts, key=lambda k: (counts.get(k), k))
+        byte_pair = max(counts, key=lambda k: (counts.get(k), (vocab[k[0]], vocab[k[1]])))  # tiebreak with vocab order
         idx = UTF8_VOCAB_SIZE + len(special_tokens) + i
         # if verbose:
         #     print(f"merge ({vocab[byte_pair[0]], vocab[byte_pair[1]]}) -> {idx} (count: {counts.get(byte_pair)})")
