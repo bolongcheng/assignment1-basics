@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
-from einops import einsum
+from einops import einsum, reduce
 
 
 class Linear(nn.Module):
@@ -19,8 +19,8 @@ class Linear(nn.Module):
         nn.init.trunc_normal_(self.W, mean=0, std=sigma, a=-3 * sigma, b=3 * sigma)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # return torch.einsum("...i,oi->...o", x, self.W)
-        # return einsum(x, self.W, "... in_features, out_features in_features -> ... out_features")
+        # NOTE(einsum): torch.einsum("...i,oi->...o", x, self.W)
+        # NOTE(einops): einsum(x, self.W, "... in_features, out_features in_features -> ... out_features")
         return x @ self.W.T
 
 
@@ -39,3 +39,40 @@ class Embedding(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # E[x] -- where x is [B, T]
         return self.E[x]
+
+
+class RMSNorm(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        eps: float = 1e-5,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.gain = nn.Parameter(torch.ones((d_model,), device=device, dtype=dtype))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        RMSNorm is layer normalization
+
+        Let x in R^d_model
+        RMSNorm_x[i] = gain[i] * x[i] / (rms(x) + eps)
+        where rms(x) = sqrt(sum(x**2) / d_model)
+
+        x.shape = (batch_size, seq_length, d_model)
+        out.shape = (batch_size, seq_length, d_model)
+        """
+
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        # NOTE(einops): reduce(x**2, "batch_size seq_length d_model -> batch_size seq_length 1", "sum")
+        # NOTE(einsum): torch.einsum("bsd -> bs", x**2).unsqueeze(-1)
+
+        rms = torch.sqrt(torch.sum(x**2, dim=2, keepdim=True) / self.d_model + self.eps)
+        result = x / rms * self.gain
+
+        return result.to(in_dtype)
