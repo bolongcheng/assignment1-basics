@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
-from einops import einsum, reduce
+from einops import einsum, reduce, rearrange
 
 
 class Linear(nn.Module):
@@ -12,7 +12,7 @@ class Linear(nn.Module):
         out_features: int,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.W = nn.Parameter(torch.empty((out_features, in_features), device=device, dtype=dtype))
         sigma = math.sqrt(2 / (in_features + out_features))
@@ -31,7 +31,7 @@ class Embedding(nn.Module):
         embedding_dim: int,  # d_model
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.E = nn.Parameter(torch.empty((num_embeddings, embedding_dim), device=device, dtype=dtype))
         nn.init.trunc_normal_(self.E, mean=0, std=1, a=-3, b=3)
@@ -48,7 +48,7 @@ class RMSNorm(nn.Module):
         eps: float = 1e-5,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.d_model = d_model
         self.eps = eps
@@ -89,7 +89,7 @@ class SwiGLU(nn.Module):
         d_ff: int | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.d_model = d_model
         d_ff_approx = round((8 * d_model // 3) / 64) * 64
@@ -175,5 +175,7 @@ class RotaryPositionalEmbedding(nn.Module):
                 x_even * self.sines[token_positions, :] + x_odd * self.cosines[token_positions, :],
             ],
             dim=-1,
-        ).flatten(start_dim=-2)
-        return out
+        )
+
+        # NOTE(einsum): rearrange(out, "... seq_len d_k_half pair-> ... seq_len (d_k_half pair)")
+        return out.flatten(start_dim=-2)
