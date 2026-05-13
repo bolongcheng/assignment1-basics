@@ -46,8 +46,8 @@ class RMSNorm(nn.Module):
         self,
         d_model: int,
         eps: float = 1e-5,
-        device=None,
-        dtype=None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -76,3 +76,51 @@ class RMSNorm(nn.Module):
         result = x / rms * self.gain
 
         return result.to(in_dtype)
+
+
+def silu(x: torch.Tensor) -> torch.Tensor:
+    return x * torch.sigmoid(x)
+
+
+class SwiGLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        d_ff_approx = round((8 * d_model // 3) / 64) * 64
+        self.d_ff = d_ff or d_ff_approx
+        self.W_up = nn.Parameter(torch.empty(self.d_ff, self.d_model, device=device, dtype=dtype))
+        self.W_down = nn.Parameter(torch.empty(self.d_model, self.d_ff, device=device, dtype=dtype))
+        self.W_gate = nn.Parameter(torch.empty(self.d_ff, self.d_model, device=device, dtype=dtype))
+        sigma = math.sqrt(2 / (self.d_model + self.d_ff))
+        nn.init.trunc_normal_(
+            self.W_up,
+            mean=0,
+            std=sigma,
+            a=-3 * sigma,
+            b=3 * sigma,
+        )
+        nn.init.trunc_normal_(
+            self.W_down,
+            mean=0,
+            std=sigma,
+            a=-3 * sigma,
+            b=3 * sigma,
+        )
+        nn.init.trunc_normal_(
+            self.W_gate,
+            mean=0,
+            std=sigma,
+            a=-3 * sigma,
+            b=3 * sigma,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        up = x @ self.W_up.T
+        gate = silu(x @ self.W_gate.T)
+        return (up * gate) @ self.W_down.T
