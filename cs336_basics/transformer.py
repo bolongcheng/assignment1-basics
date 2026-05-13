@@ -121,6 +121,59 @@ class SwiGLU(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # NOTE(einsum): up = torch.einsum("bsm,fm->bsf")
+        # NOTE(einops): up = einsum(x, self.W_up, "batch_size seq_length d_model, d_ff d_model -> batch_size seq_length d_ff")
         up = x @ self.W_up.T
+
+        # NOTE(einsum): gate = silu(torch.einsum("bsm,fm->bsf"))
+        # NOTE(einops): gate = silu(einsum(x, self.W_gate, "batch_size seq_length d_model, d_ff d_model -> batch_size seq_length d_ff"))
         gate = silu(x @ self.W_gate.T)
-        return (up * gate) @ self.W_down.T
+
+        # NOTE(einsum): result = torch.einsum("bsf,mf->bsm", up * gate, self.W_down)
+        # NOTE(einops): result = einsum(up * gate, self.W_down, "batch_size seq_length d_ff, d_model d_ff -> batch_size seq_length d_model")
+        result = (up * gate) @ self.W_down.T
+
+        return result
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(
+        self,
+        theta: float,
+        d_k: int,
+        max_seq_len: int,
+        device: torch.device | None = None,
+    ) -> None:
+        super().__init__()
+        self.theta = theta
+        if d_k % 2 != 0:
+            raise ValueError(f"d_k needs to be divisible by 2, d_k={d_k}")
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+
+        positions = torch.arange(max_seq_len, device=device)
+        inv_freqs = 1 / (theta ** (torch.arange(0, d_k, step=2, device=device) / d_k))
+        # thetas: (max_seq_len,  d_k / 2)
+        # NOTE(einsum): thetas = torch.einsum("s,d->sd", positions, freqs)
+        # NOTE(einops): thetas = einsum(positions, freqs, "max_seq_len, d_k_half -> max_seq_len d_k_half")
+        thetas = positions[:, None] * inv_freqs[None, :]
+
+        # (max_seq_len, d_k/2)
+        self.register_buffer("sines", torch.sin(thetas), persistent=False)
+        self.register_buffer("cosines", torch.cos(thetas), persistent=False)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        # x: (..., seq_len, d_k)
+        # token_positions: (..., seq_len)
+        # out: (..., seq_len, d_k)
+        x_even = x[..., ::2]  # (..., seq_len, d_k/2)
+        x_odd = x[..., 1::2]
+
+        out = torch.stack(
+            [
+                x_even * self.cosines[token_positions, :] - x_odd * self.sines[token_positions, :],
+                x_even * self.sines[token_positions, :] + x_odd * self.cosines[token_positions, :],
+            ],
+            dim=-1,
+        ).flatten(start_dim=-2)
+        return out
