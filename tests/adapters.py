@@ -89,9 +89,9 @@ def run_swiglu(
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
     swiglu = SwiGLU(d_model, d_ff)
-    swiglu.W_gate.data = w1_weight
-    swiglu.W_down.data = w2_weight
-    swiglu.W_up.data = w3_weight
+    swiglu.W_gate.load_state_dict({"W": w1_weight})
+    swiglu.W_down.load_state_dict({"W": w2_weight})
+    swiglu.W_up.load_state_dict({"W": w3_weight})
     return swiglu(in_features)
 
 
@@ -307,8 +307,24 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
+    tfmr = Transformer(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=theta,
+        rope_max_seq_len=max_seq_len,
+    )
+    tfmr.sa.W_q.load_state_dict({"W": weights["attn.q_proj.weight"]})
+    tfmr.sa.W_k.load_state_dict({"W": weights["attn.k_proj.weight"]})
+    tfmr.sa.W_v.load_state_dict({"W": weights["attn.v_proj.weight"]})
+    tfmr.sa.W_o.load_state_dict({"W": weights["attn.output_proj.weight"]})
+    tfmr.ln1.load_state_dict({"gain": weights["ln1.weight"]})
+    tfmr.swiglu.W_gate.load_state_dict({"W": weights["ffn.w1.weight"]})
+    tfmr.swiglu.W_down.load_state_dict({"W": weights["ffn.w2.weight"]})
+    tfmr.swiglu.W_up.load_state_dict({"W": weights["ffn.w3.weight"]})
+    tfmr.ln2.load_state_dict({"gain": weights["ln2.weight"]})
 
-    raise NotImplementedError
+    return tfmr(in_features, token_positions=torch.arange(in_features.shape[-2]))
 
 
 def run_transformer_lm(
