@@ -1,3 +1,4 @@
+from typing import Any
 import math
 
 import torch
@@ -205,7 +206,13 @@ def scaled_dot_product_attention(
 
 
 class MultiheadSelfAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        rope_theta: float | None = None,
+        rope_max_seq_len: int | None = None,
+    ) -> None:
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -215,34 +222,40 @@ class MultiheadSelfAttention(nn.Module):
         self.W_k = Linear(in_features=d_model, out_features=d_model)
         self.W_v = Linear(in_features=d_model, out_features=d_model)
         self.W_o = Linear(in_features=d_model, out_features=d_model)
+        self.rope = None
+        if rope_theta is not None and rope_max_seq_len is not None:
+            self.rope = RotaryPositionalEmbedding(
+                theta=rope_theta,
+                d_k=self.d_model // self.num_heads,
+                max_seq_len=rope_max_seq_len,
+            )
+
+    def _split_heads(self, x: torch.Tensor, num_heads: int, head_dim: int) -> torch.Tensor:
+        return x.view(*x.shape[:-1], num_heads, head_dim).transpose(-3, -2)
+
+    def _merge_heads(slef, x: torch.Tensor) -> torch.Tensor:
+        return x.transpose(-3, -2).flatten(-2, -1)
 
     def forward(
         self,
         x: torch.Tensor,
-        rope: RotaryPositionalEmbedding | None = None,
         token_positions: torch.Tensor | None = None,
     ) -> torch.Tensor:
         seq_len = x.shape[-2]
-        Q = self.W_q(x)
-        K = self.W_k(x)
-        V = self.W_v(x)
-        if rope is not None:
-            Q_embd = rope(
-                Q.view(*Q.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2),
-                token_positions=token_positions,
-            )
-            K_embd = rope(
-                K.view(*K.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2),
-                token_positions=token_positions,
-            )
+        Q_heads = self._split_heads(self.W_q(x), self.num_heads, self.d_k)
+        K_heads = self._split_heads(self.W_k(x), self.num_heads, self.d_k)
+        V_heads = self._split_heads(self.W_v(x), self.num_heads, self.d_v)
+        if self.rope:
+            Q_embd = self.rope(Q_heads, token_positions=token_positions)
+            K_embd = self.rope(K_heads, token_positions=token_positions)
         else:
-            Q_embd = Q.view(*Q.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2)
-            K_embd = K.view(*K.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2)
+            Q_embd = Q_heads
+            K_embd = K_heads
         mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool))
         att = scaled_dot_product_attention(
             Q=Q_embd,
             K=K_embd,
-            V=V.view(*V.shape[:-1], self.num_heads, self.d_v).transpose(-3, -2),
+            V=V_heads,
             mask=mask,
         )
-        return self.W_o(att.transpose(-3, -2).flatten(-2, -1))
+        return self.W_o(self._merge_heads(att))
