@@ -177,7 +177,7 @@ def scaled_dot_product_attention(
     # NOTE(einops): einsum(Q, K, "batch_size ... seq_len_q d_k, batch_size ... seq_len_k d_k -> batch_size ... seq_len_q seq_len_k")
     # NOTE(einsum): torch.einsum("b...qd,b...kd -> b...qk", Q, K) / d_k**0.5
     wei = Q @ K.transpose(-2, -1) / d_k**0.5
-    return softmax(wei.masked_fill(mask == 0, float("-inf")), dim=-1) @ V
+    return softmax(wei.masked_fill(mask, float("-inf")), dim=-1) @ V
 
 
 class MultiheadSelfAttention(nn.Module):
@@ -229,7 +229,7 @@ class MultiheadSelfAttention(nn.Module):
         else:
             Q_embd = Q_heads
             K_embd = K_heads
-        mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool))
+        mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool), diagonal=1)
         att = scaled_dot_product_attention(
             Q=Q_embd,
             K=K_embd,
