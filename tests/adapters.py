@@ -89,9 +89,13 @@ def run_swiglu(
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
     swiglu = SwiGLU(d_model, d_ff)
-    swiglu.W_gate.load_state_dict({"W": w1_weight})
-    swiglu.W_down.load_state_dict({"W": w2_weight})
-    swiglu.W_up.load_state_dict({"W": w3_weight})
+    swiglu.load_state_dict(
+        {
+            "W_gate.W": w1_weight,
+            "W_down.W": w2_weight,
+            "W_up.W": w3_weight,
+        }
+    )
     return swiglu(in_features)
 
 
@@ -152,10 +156,14 @@ def run_multihead_self_attention(
         d_model=d_model,
         num_heads=num_heads,
     )
-    mhsa.W_q.load_state_dict({"W": q_proj_weight})
-    mhsa.W_k.load_state_dict({"W": k_proj_weight})
-    mhsa.W_v.load_state_dict({"W": v_proj_weight})
-    mhsa.W_o.load_state_dict({"W": o_proj_weight})
+    mhsa.load_state_dict(
+        {
+            "W_q.W": q_proj_weight,
+            "W_k.W": k_proj_weight,
+            "W_v.W": v_proj_weight,
+            "W_o.W": o_proj_weight,
+        }
+    )
     return mhsa(in_features)
 
 
@@ -203,10 +211,14 @@ def run_multihead_self_attention_with_rope(
         rope_theta=theta,
         rope_max_seq_len=max_seq_len,
     )
-    mhsa.W_q.load_state_dict({"W": q_proj_weight})
-    mhsa.W_k.load_state_dict({"W": k_proj_weight})
-    mhsa.W_v.load_state_dict({"W": v_proj_weight})
-    mhsa.W_o.load_state_dict({"W": o_proj_weight})
+    mhsa.load_state_dict(
+        {
+            "W_q.W": q_proj_weight,
+            "W_k.W": k_proj_weight,
+            "W_v.W": v_proj_weight,
+            "W_o.W": o_proj_weight,
+        }
+    )
     return mhsa(in_features, token_positions)
 
 
@@ -314,16 +326,19 @@ def run_transformer_block(
         rope_theta=theta,
         rope_max_seq_len=max_seq_len,
     )
-    tfmr.sa.W_q.load_state_dict({"W": weights["attn.q_proj.weight"]})
-    tfmr.sa.W_k.load_state_dict({"W": weights["attn.k_proj.weight"]})
-    tfmr.sa.W_v.load_state_dict({"W": weights["attn.v_proj.weight"]})
-    tfmr.sa.W_o.load_state_dict({"W": weights["attn.output_proj.weight"]})
-    tfmr.ln1.load_state_dict({"gain": weights["ln1.weight"]})
-    tfmr.swiglu.W_gate.load_state_dict({"W": weights["ffn.w1.weight"]})
-    tfmr.swiglu.W_down.load_state_dict({"W": weights["ffn.w2.weight"]})
-    tfmr.swiglu.W_up.load_state_dict({"W": weights["ffn.w3.weight"]})
-    tfmr.ln2.load_state_dict({"gain": weights["ln2.weight"]})
-
+    tfmr.load_state_dict(
+        {
+            "sa.W_q.W": weights["attn.q_proj.weight"],
+            "sa.W_k.W": weights["attn.k_proj.weight"],
+            "sa.W_v.W": weights["attn.v_proj.weight"],
+            "sa.W_o.W": weights["attn.output_proj.weight"],
+            "ln1.gain": weights["ln1.weight"],
+            "swiglu.W_gate.W": weights["ffn.w1.weight"],
+            "swiglu.W_down.W": weights["ffn.w2.weight"],
+            "swiglu.W_up.W": weights["ffn.w3.weight"],
+            "ln2.gain": weights["ln2.weight"],
+        }
+    )
     return tfmr(in_features, token_positions=torch.arange(in_features.shape[-2]))
 
 
