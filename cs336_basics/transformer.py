@@ -202,3 +202,47 @@ def scaled_dot_product_attention(
     # NOTE(einsum): torch.einsum("b...qd,b...kd -> b...qk", Q, K) / d_k**0.5
     wei = Q @ K.transpose(-2, -1) / d_k**0.5
     return softmax(wei.masked_fill(mask == 0, float("-inf")), dim=-1) @ V
+
+
+class MultiheadSelfAttention(nn.Module):
+    def __init__(self, d_model: int, num_heads: int) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.d_v = d_model // num_heads
+        self.W_q = Linear(in_features=d_model, out_features=d_model)
+        self.W_k = Linear(in_features=d_model, out_features=d_model)
+        self.W_v = Linear(in_features=d_model, out_features=d_model)
+        self.W_o = Linear(in_features=d_model, out_features=d_model)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        rope: RotaryPositionalEmbedding | None = None,
+        token_positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        seq_len = x.shape[-2]
+        Q = self.W_q(x)
+        K = self.W_k(x)
+        V = self.W_v(x)
+        if rope is not None:
+            Q_embd = rope(
+                Q.view(*Q.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2),
+                token_positions=token_positions,
+            )
+            K_embd = rope(
+                K.view(*K.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2),
+                token_positions=token_positions,
+            )
+        else:
+            Q_embd = Q.view(*Q.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2)
+            K_embd = K.view(*K.shape[:-1], self.num_heads, self.d_k).transpose(-3, -2)
+        mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool))
+        att = scaled_dot_product_attention(
+            Q=Q_embd,
+            K=K_embd,
+            V=V.view(*V.shape[:-1], self.num_heads, self.d_v).transpose(-3, -2),
+            mask=mask,
+        )
+        return self.W_o(att.transpose(-3, -2).flatten(-2, -1))
