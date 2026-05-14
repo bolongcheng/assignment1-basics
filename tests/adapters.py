@@ -421,7 +421,40 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    tflm = TransformerLM(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        d_model=d_model,
+        rope_theta=rope_theta,
+    )
+    state_dict = {}
+
+    # embedding
+    state_dict["embedding.E"] = weights["token_embeddings.weight"]
+    state_dict["ff.W"] = weights["lm_head.weight"]
+    # normalization
+    state_dict["ln.gain"] = weights["ln_final.weight"]
+
+    # layers
+    for l in range(num_layers):
+        state_dict.update(
+            {
+                f"layers.{l}.sa.W_q.W": weights[f"layers.{l}.attn.q_proj.weight"],
+                f"layers.{l}.sa.W_k.W": weights[f"layers.{l}.attn.k_proj.weight"],
+                f"layers.{l}.sa.W_v.W": weights[f"layers.{l}.attn.v_proj.weight"],
+                f"layers.{l}.sa.W_o.W": weights[f"layers.{l}.attn.output_proj.weight"],
+                f"layers.{l}.ln1.gain": weights[f"layers.{l}.ln1.weight"],
+                f"layers.{l}.swiglu.W_gate.W": weights[f"layers.{l}.ffn.w1.weight"],
+                f"layers.{l}.swiglu.W_down.W": weights[f"layers.{l}.ffn.w2.weight"],
+                f"layers.{l}.swiglu.W_up.W": weights[f"layers.{l}.ffn.w3.weight"],
+                f"layers.{l}.ln2.gain": weights[f"layers.{l}.ln2.weight"],
+            }
+        )
+    tflm.load_state_dict(state_dict)
+    return tflm(in_indices, token_positions=torch.arange(in_indices.shape[-1]))
 
 
 def run_rmsnorm(

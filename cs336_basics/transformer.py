@@ -258,13 +258,63 @@ class Transformer(nn.Module):
             num_heads=num_heads,
             rope_theta=rope_theta,
             rope_max_seq_len=rope_max_seq_len,
+            device=device,
+            dtype=dtype,
         )
         self.swiglu = SwiGLU(
             d_model=d_model,
             d_ff=d_ff,
+            device=device,
+            dtype=dtype,
         )
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None) -> torch.Tensor:
         x = x + self.sa(self.ln1(x), token_positions)
         x = x + self.swiglu(self.ln2(x))
+        return x
+
+
+class TransformerLM(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        num_heads: int,
+        d_model: int,
+        d_ff: int,
+        rope_theta: float = 10000,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        super().__init__()
+        self.embedding = Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=d_model,
+            device=device,
+            dtype=dtype,
+        )
+        self.layers = nn.ModuleList(
+            [
+                Transformer(
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    d_ff=d_ff,
+                    rope_theta=rope_theta,
+                    rope_max_seq_len=context_length,
+                    device=device,
+                    dtype=dtype,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.ln = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.ff = Linear(in_features=d_model, out_features=vocab_size)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        x = self.embedding(x)
+        for layer in self.layers:
+            x = layer(x, token_positions=token_positions)
+        x = self.ln(x)
+        x = self.ff(x)
         return x
