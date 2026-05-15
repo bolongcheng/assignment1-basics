@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from typing import IO, Any, BinaryIO
 
 from cs336_basics.transformer import *
-from cs336_basics.trainer import save_checkpoint, load_checkpoint, load_batch
+from cs336_basics.train_utils import save_checkpoint, load_checkpoint, load_batch
 
 import numpy.typing as npt
 import torch

@@ -6,8 +6,6 @@ import numpy.typing as npt
 import torch
 import torch.nn as nn
 
-rng = np.random.default_rng(33)
-
 
 def load_batch(
     dataset: npt.NDArray,
@@ -16,6 +14,7 @@ def load_batch(
     device: str,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     data_len = len(dataset)
+    rng = np.random.default_rng()
     starts = rng.integers(0, data_len - context_length, size=batch_size)
     x = np.stack([dataset[i : i + context_length] for i in starts])
     y = np.stack([dataset[i + 1 : i + 1 + context_length] for i in starts])
@@ -53,3 +52,10 @@ def load_checkpoint(
     optimizer.load_state_dict(obj["optimizer"])
 
     return obj["iteration"]
+
+
+def load_dataset(
+    path: str | os.PathLike,
+    dtype: np.dtype = np.uint32,
+) -> npt.NDArray:
+    return np.memmap(path, dtype=dtype, mode="r")
