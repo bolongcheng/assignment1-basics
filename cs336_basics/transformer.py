@@ -421,3 +421,21 @@ def lr_cosine_schedule(
         return lr_min + 0.5 * (1 + math.cos((iter - T_w) / (T_c - T_w) * math.pi)) * (lr_max - lr_min)
 
     return lr_min
+
+
+def gradient_clipping(
+    parameters: Iterable[torch.nn.Parameter],
+    max_l2_norm: float,
+    eps: float = 1e-6,
+) -> None:
+    params_with_grad = [param.grad.view(-1) for param in parameters if param.grad is not None]
+
+    params_with_grad_tensor = torch.cat(params_with_grad)
+    total_norm = torch.linalg.norm(params_with_grad_tensor)
+
+    clip_factor = max_l2_norm / (total_norm + eps)
+
+    if clip_factor < 1:
+        for p in parameters:
+            if p.grad is not None:
+                p.grad *= clip_factor
