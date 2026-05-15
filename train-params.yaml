@@ -1,0 +1,43 @@
+# Data paths
+train_data: data/train.bin
+val_data: data/val.bin
+
+# Model parameters
+vocab_size: 32_000
+context_length: 512
+num_layers: 6
+num_heads: 12
+d_model: 768
+d_ff: 3072
+rope_theta: 10000.0
+
+# Optimizer parameters
+learning_rate: 1e-4
+weight_decay: 0.1
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0
+
+# Training parameters
+batch_size: 32
+max_iters: 10000
+
+# Logging and evaluation
+log_interval: 10
+wandb_project: "cs336-gpt-mini"
+wandb_run_name: "run1"
+
+# Evaluation
+eval_interval: 500
+eval_num_batches: 50
+
+# Checkpointing
+checkpoint_interval: 1000
+checkpoint_dir: checkpoints
+resume_from: null
+
+# Misc
+device: cpu
+seed: 123
+
+
