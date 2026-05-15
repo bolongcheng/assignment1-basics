@@ -62,6 +62,12 @@ def train_step(
     return loss.item()
 
 
+def _make_checkpoint_path(checkpoint_dir: str, iter: int) -> Path:
+    ckpt_dir = Path(checkpoint_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    return ckpt_dir / f"checkpoint_{iter}.pt"
+
+
 def train(config: dict[str, Any]) -> None:
     device = config["device"]
 
@@ -137,17 +143,9 @@ def train(config: dict[str, Any]) -> None:
                 step=iter,
             )
 
-        if iter > 0 and iter % config["checkpoint_interval"] == 0:
-            ckpt_dir = Path(config["checkpoint_dir"])
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
-            ckpt_path = ckpt_dir / f"checkpoint_{iter}.pt"
-
+        if (iter > 0 and iter % config["checkpoint_interval"] == 0) or iter == config["max_iters"]:
+            ckpt_path = _make_checkpoint_path(config["checkpoint_dir"], iter)
             save_checkpoint(model=model, optimizer=optimizer, iteration=iter, out=ckpt_path)
-
-    ckpt_dir = Path(config["checkpoint_dir"])
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_path = ckpt_dir / f"checkpoint_{config['max_iters']}.pt"
-    save_checkpoint(model=model, optimizer=optimizer, iteration=config["max_iters"], out=ckpt_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
