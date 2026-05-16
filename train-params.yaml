@@ -3,12 +3,12 @@ train_data: data/train.bin
 val_data: data/val.bin
 
 # Model parameters
-vocab_size: 32_000
-context_length: 512
-num_layers: 6
-num_heads: 12
-d_model: 768
-d_ff: 3072
+vocab_size: 10000
+context_length: 256
+num_layers: 4
+num_heads: 6
+d_model: 512
+d_ff: 1344
 rope_theta: 10000.0
 
 # Optimizer parameters
@@ -20,7 +20,7 @@ grad_clip: 1.0
 
 # Training parameters
 batch_size: 32
-max_iters: 10000
+max_iters: 40000
 
 # Logging and evaluation
 log_interval: 10
