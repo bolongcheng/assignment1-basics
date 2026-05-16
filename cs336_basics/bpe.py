@@ -7,10 +7,11 @@ import regex as re
 from tqdm import tqdm
 
 from cs336_basics.pretokenization_example import find_chunk_boundaries
+from tests.common import gpt2_bytes_to_unicode
 
 ENCODE_FMT = "utf-8"
 UTF8_VOCAB_SIZE = 256
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 CHECKPOINT_ITERS = 2000
 
 
@@ -56,7 +57,7 @@ def process_chunk(args: tuple[str, int, int, list[str]]) -> Counter:
         # Run pre-tokenization on your chunk and store the counts for each pre-token
         sub_chunks = re.split(special_token_pat, chunk)
         for sub_chunk in sub_chunks:
-            pre_tokens = re.finditer(PAT, sub_chunk)  # stream everything
+            pre_tokens = re.finditer(GPT2_PAT, sub_chunk)  # stream everything
             pre_tok_counter += Counter(
                 tuple(pre_tok.group(0).encode(ENCODE_FMT, errors="replace")) for pre_tok in pre_tokens
             )
@@ -79,6 +80,10 @@ def get_pre_token_counter(
     return sum(counters, Counter())
 
 
+def render_bytes(b: bytes, mapping: dict[int, str]) -> str:
+    return "".join([mapping[byte] for byte in b])
+
+
 def train_bpe(
     input_path: str,
     vocab_size: int,
@@ -95,13 +100,16 @@ def train_bpe(
 
     pre_tok_counter = get_pre_token_counter(input_path, special_tokens)
     num_merges = vocab_size - UTF8_VOCAB_SIZE - len(special_tokens)
+    mapping = gpt2_bytes_to_unicode()
 
     for i in tqdm(range(num_merges)):
         counts = byte_pair_freq_counter(pre_tok_counter)
         byte_pair = max(counts, key=lambda k: (counts.get(k), (vocab[k[0]], vocab[k[1]])))  # tiebreak with vocab order
         idx = UTF8_VOCAB_SIZE + len(special_tokens) + i
         if verbose:
-            print(f"merge ({vocab[byte_pair[0]], vocab[byte_pair[1]]}) -> {idx} (count: {counts.get(byte_pair)})")
+            print(
+                f"merge ({render_bytes(vocab[byte_pair[0]], mapping)}, {render_bytes(vocab[byte_pair[1]], mapping)}) -> {idx} (count: {counts.get(byte_pair)})"
+            )
         pre_tok_counter = merge_bytes(pre_tok_counter, byte_pair, idx)
         vocab[idx] = vocab[byte_pair[0]] + vocab[byte_pair[1]]
         merges.append((vocab[byte_pair[0]], vocab[byte_pair[1]]))
@@ -109,11 +117,15 @@ def train_bpe(
         if save_checkpoint and i % CHECKPOINT_ITERS == 0:
             print(f"Saving checkpoint at iteration {i}")
             with open(f"./data/owt-vocab-checkpoint-{i}.json", "w") as f:
-                json.dump({v.decode(ENCODE_FMT, errors="replace"): k for k, v in vocab.items()}, f, indent=2)
+                checkpoint_vocab = {}
+                for k, v in vocab.items():
+                    if UTF8_VOCAB_SIZE <= k < UTF8_VOCAB_SIZE + len(special_tokens):
+                        checkpoint_vocab[special_tokens[k - UTF8_VOCAB_SIZE]] = k
+                    else:
+                        checkpoint_vocab[render_bytes(v, mapping)] = k
+                json.dump(checkpoint_vocab, f, indent=2)
             with open(f"./data/owt-merges-checkpoint-{i}.txt", "w") as f:
                 for merge in merges:
-                    f.write(
-                        f"{merge[0].decode(ENCODE_FMT, errors='replace')} {merge[1].decode(ENCODE_FMT, errors='replace')}\n"
-                    )
+                    f.write(f"{render_bytes(merge[0], mapping)} {render_bytes(merge[1], mapping)}\n")
 
     return vocab, merges
