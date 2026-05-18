@@ -40,7 +40,7 @@ class Tokenizer:
             merges = [
                 (tok1.encode(ENCODE_FMT), tok2.encode(ENCODE_FMT))
                 for line in f
-                for tok1, tok2 in [line.split(" ", maxsplit=1)]
+                for tok1, tok2 in [line.rstrip("\n").split(" ", maxsplit=1)]
             ]
         return cls(vocab, merges, special_tokens)
 
