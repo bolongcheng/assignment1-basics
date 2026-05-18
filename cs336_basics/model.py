@@ -308,3 +308,34 @@ class TransformerLM(nn.Module):
         x = self.ln(x)
         x = self.ff(x)
         return x
+
+
+def _top_p_truncate(probs: torch.Tensor, top_p: float) -> torch.Tensor:
+    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    sorted_probs[(cumulative_probs > top_p).bool()] = 0.0
+    sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+    sorted_probs[sorted_indices] = sorted_probs
+    return sorted_probs
+
+
+def generate(
+    model: TransformerLM,
+    x: torch.Tensor,
+    max_new_tokens: int,
+    temperature: float = 1.0,
+    top_p: float = 1.0,
+    stop_tokens: list[int] = [256],  # hardcoded <|endoftext|>
+) -> torch.Tensor:
+    temperature = max(temperature, 1e-3)
+    for _ in range(max_new_tokens):
+        logits = model(x, token_positions=None)
+        final_logits = logits[:, -1, :] / temperature
+        probs = softmax(final_logits, dim=-1)
+        if top_p < 1.0:
+            probs = _top_p_truncate(probs, top_p)
+        next_tokens = torch.multinomial(probs, num_samples=1)
+        x = torch.cat([x, next_tokens], dim=-1)
+        if any(token in stop_tokens for token in next_tokens.flatten().tolist()):
+            break
+    return x
