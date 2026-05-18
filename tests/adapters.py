@@ -10,10 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.bpe import train_bpe
-from cs336_basics.optimizer import AdamW, lr_cosine_schedule
-from cs336_basics.tokenizer import Tokenizer
-from cs336_basics.train_utils import load_batch, load_checkpoint, save_checkpoint
-from cs336_basics.transformer import (
+from cs336_basics.model import (
     Embedding,
     Linear,
     MultiheadSelfAttention,
@@ -26,6 +23,9 @@ from cs336_basics.transformer import (
     silu,
     softmax,
 )
+from cs336_basics.optimizer import AdamW, lr_cosine_schedule
+from cs336_basics.tokenizer import Tokenizer
+from cs336_basics.train_utils import load_batch, load_checkpoint, save_checkpoint
 from cs336_basics.utils import cross_entropy, gradient_clipping
 
 
