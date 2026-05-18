@@ -221,12 +221,15 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-
+    rope = RotaryPositionalEmbedding(
+        theta=theta,
+        d_k=d_model // num_heads,
+        max_seq_len=max_seq_len,
+    )
     mhsa = MultiheadSelfAttention(
         d_model=d_model,
         num_heads=num_heads,
-        rope_theta=theta,
-        rope_max_seq_len=max_seq_len,
+        rope_embedding=rope,
     )
     mhsa.load_state_dict(
         {
@@ -336,12 +339,16 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
+    rope = RotaryPositionalEmbedding(
+        theta=theta,
+        d_k=d_model // num_heads,
+        max_seq_len=max_seq_len,
+    )
     tfmr = Transformer(
         d_model=d_model,
         num_heads=num_heads,
         d_ff=d_ff,
-        rope_theta=theta,
-        rope_max_seq_len=max_seq_len,
+        rope_embedding=rope,
     )
     tfmr.load_state_dict(
         {
