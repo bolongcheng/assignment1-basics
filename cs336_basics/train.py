@@ -1,16 +1,19 @@
 import argparse
 from pathlib import Path
 from typing import Any
-import yaml
 
-import numpy as np
 import numpy.typing as npt
 import torch
 import torch.nn as nn
 import wandb
+import yaml
 
-from cs336_basics.train_utils import load_batch, load_checkpoint, save_checkpoint, load_dataset
-from cs336_basics.transformer import cross_entropy, TransformerLM, AdamW, gradient_clipping
+from cs336_basics.model import TransformerLM
+from cs336_basics.optimizer import AdamW, lr_cosine_schedule
+from cs336_basics.train_utils import load_batch, load_checkpoint, load_dataset, save_checkpoint
+from cs336_basics.utils import cross_entropy, gradient_clipping
+from cs336_basics.wandb_logger import WandbLogger
+
 
 wandb.login()
 
@@ -26,7 +29,7 @@ def evaluate(
 ) -> float:
 
     model.eval()
-    losses = []
+    total_loss = 0.0
     for _ in range(num_batches):
         x, y = load_batch(
             dataset=dataset,
@@ -35,11 +38,10 @@ def evaluate(
             device=device,
         )
 
-        loss = cross_entropy(model(x), y)
-        losses.append(loss.item())
+        total_loss += cross_entropy(model(x), y).item()
 
     model.train()
-    return float(np.mean(losses))
+    return total_loss / num_batches
 
 
 def train_step(
@@ -52,7 +54,6 @@ def train_step(
 
     x, y = batch
     loss = cross_entropy(model(x), y)
-
     optimizer.zero_grad(set_to_none=True)
     gradient_clipping(
         model.parameters(),
@@ -93,38 +94,50 @@ def train(config: dict[str, Any]) -> None:
     )
 
     start_iter = 0
+    num_tokens_processed = 0
 
     if config["resume_from"] is not None:
         print(f"Loading checkpoint from: {config['resume_from']}")
         start_iter = load_checkpoint(src=config["resume_from"], model=model, optimizer=optimizer)
         print(f"Resumed from iteration {start_iter}")
+        num_tokens_processed = start_iter * config["batch_size"] * config["context_length"]
 
     wandb.init(project=config["wandb_project"], name=config["wandb_run_name"], config=config)
+    logger = WandbLogger(
+        model=model,
+        optimizer=optimizer,
+        log_interval=config["log_interval"],
+        activation_log_interval=config["activation_log_interval"],
+        grad_clip_threshold=config["max_l2_norm"],
+        starting_step=start_iter,
+        num_tokens_processed=num_tokens_processed,
+    )
 
     for iter in range(start_iter, config["max_iters"]):
-        batch = load_batch(
+        train_batch = load_batch(
             dataset=train_data,
             batch_size=config["batch_size"],
             context_length=config["context_length"],
             device=device,
         )
-        loss = train_step(
+
+        lr = lr_cosine_schedule(
+            lr_min=config["lr_min"],
+            lr_max=config["lr_max"],
+            iter=iter,
+            T_w=config["T_w"],
+            T_c=config["T_c"],
+        )
+        optimizer.param_groups[0]["lr"] = lr
+
+        train_loss = train_step(
             model=model,
             optimizer=optimizer,
-            batch=batch,
+            batch=train_batch,
             max_l2_norm=config["max_l2_norm"],
         )
 
-        if iter % config["log_interval"] == 0:
-            train_perplexity = np.exp(loss)
-            wandb.log(
-                {
-                    "train_loss": loss,
-                    "train_perplexity": train_perplexity,
-                },
-                step=iter,
-            )
-
+        val_loss = None
         if iter > 0 and iter % config["eval_interval"] == 0:
             val_loss = evaluate(
                 model=model,
@@ -134,18 +147,19 @@ def train(config: dict[str, Any]) -> None:
                 device=device,
                 num_batches=config["eval_num_batches"],
             )
-            val_perplexity = np.exp(val_loss)
-            wandb.log(
-                {
-                    "val_loss": val_loss,
-                    "val_perplexity": val_perplexity,
-                },
-                step=iter,
-            )
+
+        logger.log_step(
+            train_loss=train_loss,
+            val_loss=val_loss,
+            batch_tokens=train_batch[0].numel(),
+        )
 
         if (iter > 0 and iter % config["checkpoint_interval"] == 0) or iter == config["max_iters"]:
             ckpt_path = _make_checkpoint_path(config["checkpoint_dir"], iter)
             save_checkpoint(model=model, optimizer=optimizer, iteration=iter, out=ckpt_path)
+
+    logger.remove_hooks()
+    wandb.finish()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beta2", type=float, default=0.95)
     parser.add_argument("--weight-decay", type=float, default=0.1)
     parser.add_argument("--max-l2-norm", type=float, default=1.0)
+    parser.add_argument("--lr-min", type=float, default=3e-5)
+    parser.add_argument("--lr-max", type=float, default=3e-4)
+    parser.add_argument("--T-w", type=int, default=800)
+    parser.add_argument("--T-c", type=int, default=38000)
 
     # Training parameters
     parser.add_argument("--batch-size", type=int, default=32)

@@ -13,23 +13,23 @@ class WandbLogger:
         self,
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
-        total_tokens: int,  # total tokens in your dataset
+        grad_clip_threshold: float,
         log_interval: int = 10,  # log scalars every N steps
         activation_log_interval: int = 100,  # log activations every N steps (expensive)
-        grad_clip_threshold: float = 1.0,
         starting_step: int = 0,
+        num_tokens_processed: int = 0,
     ):
         self.model = model
         self.optimizer = optimizer
-        self.total_tokens = total_tokens
         self.log_interval = log_interval
         self.activation_log_interval = activation_log_interval
         self.grad_clip_threshold = grad_clip_threshold
 
         self.step = starting_step
-        self.tokens_processed = 0
+        self.num_tokens_processed = num_tokens_processed
         self.grad_clip_count = 0
         self.step_start_time = time.time()
+        self._tokens_since_last_log = 0
 
         # stores activation norms, populated by forward hooks
         self._activation_norms: dict[str, float] = {}
@@ -109,7 +109,8 @@ class WandbLogger:
         skip_activation_log: bool = False,
     ):
         self.step += 1
-        self.tokens_processed += batch_tokens
+        self.num_tokens_processed += batch_tokens
+        self._tokens_since_last_log += batch_tokens
         step_time = time.time() - self.step_start_time
         self.step_start_time = time.time()
 
@@ -152,9 +153,10 @@ class WandbLogger:
                 safe_name = layer_name.replace(".", "/")
                 log_dict[f"activations/{safe_name}"] = norm
 
-        tokens_per_sec = batch_tokens / max(step_time, 1e-6)
+        tokens_per_sec = self._tokens_since_last_log / max(step_time, 1e-6)
+        self._tokens_since_last_log = 0
         log_dict["perf/tokens_per_sec"] = tokens_per_sec
         log_dict["perf/step_time_ms"] = step_time * 1000
-        log_dict["perf/tokens_seen"] = self.tokens_processed
+        log_dict["perf/tokens_seen"] = self.num_tokens_processed
 
         wandb.log(log_dict, step=self.step)
