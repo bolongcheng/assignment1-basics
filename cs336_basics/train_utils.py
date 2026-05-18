@@ -1,5 +1,5 @@
 import os
-from typing import BinaryIO, IO, TypedDict, Any
+from typing import IO, Any, BinaryIO, TypedDict
 
 import numpy as np
 import numpy.typing as npt
