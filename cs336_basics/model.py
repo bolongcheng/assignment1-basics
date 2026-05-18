@@ -180,8 +180,7 @@ class MultiheadSelfAttention(nn.Module):
         self,
         d_model: int,
         num_heads: int,
-        rope_theta: float | None = None,
-        rope_max_seq_len: int | None = None,
+        rope_embedding: RotaryPositionalEmbedding | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -194,14 +193,7 @@ class MultiheadSelfAttention(nn.Module):
         self.W_k = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
         self.W_v = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
         self.W_o = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
-        self.rope = None
-        if rope_theta is not None and rope_max_seq_len is not None:
-            self.rope = RotaryPositionalEmbedding(
-                theta=rope_theta,
-                d_k=self.d_model // self.num_heads,
-                max_seq_len=rope_max_seq_len,
-                device=device,
-            )
+        self.rope = rope_embedding
 
     def _split_heads(self, x: torch.Tensor, num_heads: int, head_dim: int) -> torch.Tensor:
         return x.view(*x.shape[:-1], num_heads, head_dim).transpose(-3, -2)
@@ -240,8 +232,7 @@ class Transformer(nn.Module):
         d_model: int,
         num_heads: int,
         d_ff: int,
-        rope_theta: float | None = None,
-        rope_max_seq_len: int | None = None,
+        rope_embedding: RotaryPositionalEmbedding | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
@@ -251,8 +242,7 @@ class Transformer(nn.Module):
         self.sa = MultiheadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
-            rope_theta=rope_theta,
-            rope_max_seq_len=rope_max_seq_len,
+            rope_embedding=rope_embedding,
             device=device,
             dtype=dtype,
         )
@@ -289,14 +279,19 @@ class TransformerLM(nn.Module):
             device=device,
             dtype=dtype,
         )
+        self.rope = RotaryPositionalEmbedding(
+            theta=rope_theta,
+            d_k=d_model // num_heads,
+            max_seq_len=context_length,
+            device=device,
+        )
         self.layers = nn.ModuleList(
             [
                 Transformer(
                     d_model=d_model,
                     num_heads=num_heads,
                     d_ff=d_ff,
-                    rope_theta=rope_theta,
-                    rope_max_seq_len=context_length,
+                    rope_embedding=self.rope,
                     device=device,
                     dtype=dtype,
                 )
