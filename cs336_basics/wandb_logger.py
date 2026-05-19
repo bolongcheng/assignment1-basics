@@ -48,7 +48,7 @@ class WandbLogger:
     def _make_hook(self, name: str):
         def hook(module, input, output):
             if isinstance(output, torch.Tensor):
-                self._activation_norms[name] = output.detach().float().norm().item()
+                self._activation_norms[name] = output.detach().float().norm()
 
         return hook
 
@@ -151,7 +151,7 @@ class WandbLogger:
         if not skip_activation_log and self.step % self.activation_log_interval == 0:
             for layer_name, norm in self._activation_norms.items():
                 safe_name = layer_name.replace(".", "/")
-                log_dict[f"activations/{safe_name}"] = norm
+                log_dict[f"activations/{safe_name}"] = norm.item() if isinstance(norm, torch.Tensor) else norm
 
         tokens_per_sec = self._tokens_since_last_log / max(step_time, 1e-6)
         self._tokens_since_last_log = 0
