@@ -37,8 +37,8 @@ def evaluate(
             context_length=context_length,
             device=device,
         )
-
-        total_loss += cross_entropy(model(x), y).item()
+        pred = model(x)
+        total_loss += cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1)).item()
 
     model.train()
     return total_loss / num_batches
@@ -53,8 +53,10 @@ def train_step(
     model.train()
 
     x, y = batch
-    loss = cross_entropy(model(x), y)
+    pred = model(x)
+    loss = cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1))
     optimizer.zero_grad(set_to_none=True)
+    loss.backward()
     gradient_clipping(
         model.parameters(),
         max_l2_norm=max_l2_norm,
@@ -168,38 +170,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=str, required=True)
 
     # Model parameters
-    parser.add_argument("--vocab-size", type=int, default=32_000)
-    parser.add_argument("--context-length", type=int, default=512)
-    parser.add_argument("--num-layers", type=int, default=6)
-    parser.add_argument("--num-heads", type=int, default=12)
-    parser.add_argument("--d-model", type=int, default=768)
-    parser.add_argument("--d-ff", type=int, default=3072)
-    parser.add_argument("--rope-theta", type=float, default=10000.0)
+    parser.add_argument("--vocab_size", type=int, default=10_000)
+    parser.add_argument("--context_length", type=int, default=256)
+    parser.add_argument("--num_layers", type=int, default=4)
+    parser.add_argument("--num_heads", type=int, default=16)
+    parser.add_argument("--d_model", type=int, default=512)
+    parser.add_argument("--d_ff", type=int, default=1344)
+    parser.add_argument("--rope_theta", type=float, default=10000.0)
 
     # Optimizer parameters
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--beta2", type=float, default=0.95)
-    parser.add_argument("--weight-decay", type=float, default=0.1)
-    parser.add_argument("--max-l2-norm", type=float, default=1.0)
-    parser.add_argument("--lr-min", type=float, default=3e-5)
-    parser.add_argument("--lr-max", type=float, default=3e-4)
-    parser.add_argument("--T-w", type=int, default=800)
-    parser.add_argument("--T-c", type=int, default=38000)
+    parser.add_argument("--weight_decay", type=float, default=0.1)
+    parser.add_argument("--max_l2_norm", type=float, default=1.0)
+    parser.add_argument("--lr_min", type=float, default=3e-5)
+    parser.add_argument("--lr_max", type=float, default=3e-4)
+    parser.add_argument("--T_w", type=int, default=800)
+    parser.add_argument("--T_c", type=int, default=38000)
 
     # Training parameters
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--max-iters", type=int, default=10000)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--max_iters", type=int, default=40000)
 
     # Logging and evaluation
-    parser.add_argument("--log-interval", type=int)
-    parser.add_argument("--eval-interval", type=int)
-    parser.add_argument("--eval-num-batches", type=int)
+    parser.add_argument("--log_interval", type=int)
+    parser.add_argument("--eval_interval", type=int)
+    parser.add_argument("--eval_num_batches", type=int)
 
     # Checkpointing
-    parser.add_argument("--checkpoint-interval", type=int)
-    parser.add_argument("--resume-from", type=str, default=None)
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--checkpoint_interval", type=int)
+    parser.add_argument("--resume_from", type=str, default=None)
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
 
     # Miscellanous
     parser.add_argument("--device", type=str, default="cpu")

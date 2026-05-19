@@ -1,6 +1,6 @@
 # Data paths
-train_path: data/tokens/tinystories-train.bin
-valid_path: data/tokens/tinystories-val.bin
+train_path: data/tokens/tinystories-train-mini.bin
+valid_path: data/tokens/tinystories-val-mini.bin
 
 # Model parameters
 vocab_size: 10000
@@ -29,14 +29,14 @@ batch_size: 32
 max_iters: 40000
 
 # Logging and evaluation
-log_interval: 20
-activation_log_interval: 100
+log_interval: 1
+activation_log_interval: 10
 wandb_project: "cs336-gpt-mini"
 wandb_run_name: "run1"
 
 # Evaluation
-eval_interval: 200
-eval_num_batches: 100
+eval_interval: 50
+eval_num_batches: 50
 
 # Checkpointing
 checkpoint_interval: 1000
@@ -46,5 +46,8 @@ resume_from: null
 # Misc
 device: cpu
 seed: 123
+
+
+
 
 

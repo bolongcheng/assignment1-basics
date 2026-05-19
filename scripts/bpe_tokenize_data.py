@@ -26,6 +26,14 @@ DATASET_MAPPER = {
         "output-train-path": "./data/tokens/owt-train.bin",
         "output-valid-path": "./data/tokens/owt-val.bin",
     },
+    "mini": {
+        "vocab-path": "./data/tokenizer/tinystories-vocab.json",
+        "merges-path": "./data/tokenizer/tinystories-merges.txt",
+        "input-train-path": "./tests/fixtures/tinystories_sample_5M.txt",
+        "input-valid-path": "./tests/fixtures/tinystories_sample_5M.txt",
+        "output-train-path": "./data/tokens/tinystories-train-mini.bin",
+        "output-valid-path": "./data/tokens/tinystories-val-mini.bin",
+    },
 }
 
 
