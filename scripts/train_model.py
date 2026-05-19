@@ -20,7 +20,6 @@ wandb.login()
 DEVICE_TO_DTYPE = {
     "cuda": torch.float16,
     "cpu": torch.float32,
-    "mps": torch.float32,
 }
 
 
