@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import wandb
 import yaml
+from tqdm import tqdm
 
 from cs336_basics.model import TransformerLM
 from cs336_basics.optimizer import AdamW, lr_cosine_schedule
@@ -16,6 +17,11 @@ from cs336_basics.wandb_logger import WandbLogger
 
 
 wandb.login()
+DEVICE_TO_DTYPE = {
+    "cuda": torch.float16,
+    "cpu": torch.float32,
+    "mps": torch.float32,
+}
 
 
 @torch.no_grad()
@@ -86,7 +92,12 @@ def train(config: dict[str, Any]) -> None:
         d_ff=config["d_ff"],
         rope_theta=config["rope_theta"],
         device=device,
+        dtype=DEVICE_TO_DTYPE[device],
     )
+    if device == "cpu":
+        model = torch.compile(model)
+    if device == "mps":
+        model = torch.compile(model, backend="aot_eager")
 
     optimizer = AdamW(
         model.parameters(),
@@ -115,7 +126,7 @@ def train(config: dict[str, Any]) -> None:
         num_tokens_processed=num_tokens_processed,
     )
 
-    for iter in range(start_iter, config["max_iters"]):
+    for iter in tqdm(range(start_iter, config["max_iters"])):
         train_batch = load_batch(
             dataset=train_data,
             batch_size=config["batch_size"],
