@@ -181,28 +181,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=str, required=True)
 
     # Model parameters
-    parser.add_argument("--vocab_size", type=int, default=10_000)
-    parser.add_argument("--context_length", type=int, default=256)
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--num_heads", type=int, default=16)
-    parser.add_argument("--d_model", type=int, default=512)
-    parser.add_argument("--d_ff", type=int, default=1344)
-    parser.add_argument("--rope_theta", type=float, default=10000.0)
+    parser.add_argument("--vocab_size", type=int)
+    parser.add_argument("--context_length", type=int)
+    parser.add_argument("--num_layers", type=int)
+    parser.add_argument("--num_heads", type=int)
+    parser.add_argument("--d_model", type=int)
+    parser.add_argument("--d_ff", type=int)
+    parser.add_argument("--rope_theta", type=float)
 
     # Optimizer parameters
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--beta1", type=float, default=0.9)
-    parser.add_argument("--beta2", type=float, default=0.95)
-    parser.add_argument("--weight_decay", type=float, default=0.1)
-    parser.add_argument("--max_l2_norm", type=float, default=1.0)
-    parser.add_argument("--lr_min", type=float, default=3e-5)
-    parser.add_argument("--lr_max", type=float, default=3e-4)
-    parser.add_argument("--T_w", type=int, default=800)
-    parser.add_argument("--T_c", type=int, default=38000)
+    parser.add_argument("--learning_rate", type=float)
+    parser.add_argument("--beta1", type=float)
+    parser.add_argument("--beta2", type=float)
+    parser.add_argument("--weight_decay", type=float)
+    parser.add_argument("--max_l2_norm", type=float)
+    parser.add_argument("--lr_min", type=float)
+    parser.add_argument("--lr_max", type=float)
+    parser.add_argument("--T_w", type=int)
+    parser.add_argument("--T_c", type=int)
 
     # Training parameters
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--max_iters", type=int, default=40000)
+    parser.add_argument("--batch_size", type=int)
+    parser.add_argument("--max_iters", type=int)
 
     # Logging and evaluation
     parser.add_argument("--log_interval", type=int)
@@ -211,11 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Checkpointing
     parser.add_argument("--checkpoint_interval", type=int)
-    parser.add_argument("--resume_from", type=str, default=None)
-    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
+    parser.add_argument("--resume_from", type=str)
 
     # Miscellanous
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str)
 
     return parser
 
