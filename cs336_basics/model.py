@@ -53,12 +53,11 @@ class RMSNorm(nn.Module):
         d_model: int,
         eps: float = 1e-5,
         device: torch.device | None = None,
-        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
         self.d_model = d_model
         self.eps = eps
-        self.gain = nn.Parameter(torch.ones((d_model,), device=device, dtype=dtype))
+        self.gain = nn.Parameter(torch.ones((d_model,), device=device))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -155,7 +154,7 @@ class RotaryPositionalEmbedding(nn.Module):
         )
 
         # NOTE(einsum): rearrange(out, "... seq_len d_k_half pair-> ... seq_len (d_k_half pair)")
-        return out.flatten(start_dim=-2)
+        return out.view(*out.shape[:-2], -1)
 
 
 def scaled_dot_product_attention(
@@ -211,15 +210,12 @@ class MultiheadSelfAttention(nn.Module):
         K_heads = self._split_heads(self.W_k(x), self.num_heads, self.d_k)
         V_heads = self._split_heads(self.W_v(x), self.num_heads, self.d_v)
         if self.rope:
-            Q_embd = self.rope(Q_heads, token_positions=token_positions)
-            K_embd = self.rope(K_heads, token_positions=token_positions)
-        else:
-            Q_embd = Q_heads
-            K_embd = K_heads
+            Q_heads = self.rope(Q_heads, token_positions=token_positions)
+            K_heads = self.rope(K_heads, token_positions=token_positions)
         mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool), diagonal=1)
         att = scaled_dot_product_attention(
-            Q=Q_embd,
-            K=K_embd,
+            Q=Q_heads,
+            K=K_heads,
             V=V_heads,
             mask=mask,
         )
@@ -237,8 +233,8 @@ class Transformer(nn.Module):
         dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
-        self.ln1 = RMSNorm(d_model=d_model, eps=1e-5, device=device, dtype=dtype)
-        self.ln2 = RMSNorm(d_model=d_model, eps=1e-5, device=device, dtype=dtype)
+        self.ln1 = RMSNorm(d_model=d_model, eps=1e-5, device=device)
+        self.ln2 = RMSNorm(d_model=d_model, eps=1e-5, device=device)
         self.sa = MultiheadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
@@ -259,6 +255,16 @@ class Transformer(nn.Module):
         return x
 
 
+def _top_p_truncate(probs: torch.Tensor, top_p: float) -> torch.Tensor:
+    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    sorted_probs[(cumulative_probs > top_p).bool()] = 0.0
+    sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+
+    out_probs = torch.zeros_like(probs)
+    return out_probs.scatter_(dim=-1, index=sorted_indices, src=sorted_probs)
+
+
 class TransformerLM(nn.Module):
     def __init__(
         self,
@@ -273,6 +279,8 @@ class TransformerLM(nn.Module):
         dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
+        self.vocab_size = vocab_size
+        self.context_length = context_length
         self.embedding = Embedding(
             num_embeddings=vocab_size,
             embedding_dim=d_model,
@@ -298,7 +306,7 @@ class TransformerLM(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        self.ln = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.ln = RMSNorm(d_model=d_model, device=device)
         self.ff = Linear(in_features=d_model, out_features=vocab_size)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
@@ -309,33 +317,29 @@ class TransformerLM(nn.Module):
         x = self.ff(x)
         return x
 
+    @torch.no_grad()
+    def generate(
+        self,
+        x: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        stop_token_id: int = 256,  # hardcoded <|endoftext|>
+    ) -> torch.Tensor:
+        temperature = max(temperature, 1e-3)
+        for _ in range(max_new_tokens):
+            logits = self.forward(x[:, -self.context_length :])
+            final_logits = logits[:, -1, :] / temperature
+            probs = softmax(final_logits, dim=-1)
+            if top_p < 1.0:
+                probs = _top_p_truncate(probs, top_p)
+            next_tokens = torch.multinomial(probs, num_samples=1)
+            if next_tokens.item() == stop_token_id:
+                break
+            x = torch.cat([x, next_tokens], dim=-1)
 
-def _top_p_truncate(probs: torch.Tensor, top_p: float) -> torch.Tensor:
-    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
-    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-    sorted_probs[(cumulative_probs > top_p).bool()] = 0.0
-    sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
-    sorted_probs[sorted_indices] = sorted_probs
-    return sorted_probs
+        return x
 
-
-def generate(
-    model: TransformerLM,
-    x: torch.Tensor,
-    max_new_tokens: int,
-    temperature: float = 1.0,
-    top_p: float = 1.0,
-    stop_tokens: list[int] = [256],  # hardcoded <|endoftext|>
-) -> torch.Tensor:
-    temperature = max(temperature, 1e-3)
-    for _ in range(max_new_tokens):
-        logits = model(x, token_positions=None)
-        final_logits = logits[:, -1, :] / temperature
-        probs = softmax(final_logits, dim=-1)
-        if top_p < 1.0:
-            probs = _top_p_truncate(probs, top_p)
-        next_tokens = torch.multinomial(probs, num_samples=1)
-        x = torch.cat([x, next_tokens], dim=-1)
-        if any(token in stop_tokens for token in next_tokens.flatten().tolist()):
-            break
-    return x
+    def get_num_params(self) -> int:
+        n_params = sum(p.numel() for p in self.parameters())
+        return n_params
