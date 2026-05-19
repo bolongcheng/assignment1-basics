@@ -22,7 +22,7 @@ DATASET_MAPPER = {
         "vocab-path": "./data/tokenizer/owt-vocab.json",
         "merges-path": "./data/tokenizer/owt-merges.txt",
         "input-train-path": "./data/owt_train.txt",
-        "input-valid-path": "./data/owt_val.txt",
+        "input-valid-path": "./data/owt_valid.txt",
         "output-train-path": "./data/tokens/owt-train.bin",
         "output-valid-path": "./data/tokens/owt-val.bin",
     },
