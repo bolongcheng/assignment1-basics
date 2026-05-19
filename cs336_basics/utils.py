@@ -20,14 +20,13 @@ def gradient_clipping(
     max_l2_norm: float,
     eps: float = 1e-6,
 ) -> None:
-    params_with_grad = [param.grad.view(-1) for param in parameters if param.grad is not None]
+    grads = [param.grad for param in parameters if param.grad is not None]
 
-    params_with_grad_tensor = torch.cat(params_with_grad)
-    total_norm = torch.linalg.norm(params_with_grad_tensor)
+    grads_tensor = torch.cat([g.view(-1) for g in grads])
+    total_norm = torch.linalg.norm(grads_tensor)
 
     clip_factor = max_l2_norm / (total_norm + eps)
 
     if clip_factor < 1:
-        for p in parameters:
-            if p.grad is not None:
-                p.grad *= clip_factor
+        for g in grads:
+            g *= clip_factor
