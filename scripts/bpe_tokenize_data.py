@@ -7,7 +7,6 @@ from tqdm import tqdm
 from cs336_basics.bpe import ENCODE_FMT
 from cs336_basics.pretokenization_example import find_chunk_boundaries
 from cs336_basics.tokenizer import Tokenizer
-from cs336_basics.train_utils import load_batch, load_dataset
 
 
 DATASET_MAPPER = {
@@ -22,8 +21,8 @@ DATASET_MAPPER = {
     "owt": {
         "vocab-path": "./data/tokenizer/owt-vocab.json",
         "merges-path": "./data/tokenizer/owt-merges.txt",
-        "input-train-path": "./data/owt/owt_train.txt",
-        "input-valid-path": "./data/owt/owt_val.txt",
+        "input-train-path": "./data/owt_train.txt",
+        "input-valid-path": "./data/owt_val.txt",
         "output-train-path": "./data/tokens/owt-train.bin",
         "output-valid-path": "./data/tokens/owt-val.bin",
     },
@@ -41,7 +40,6 @@ def load_tokenizer(
 def chunk_file(input_path: str, eot_token: str = "<|endoftext|>") -> Iterator[str]:
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(f, 10_000, b"<|endoftext|>")
-
         for start, end in tqdm(zip(boundaries[:-1], boundaries[1:]), desc="Chunking", total=len(boundaries) - 1):
             with open(input_path, "rb") as f:
                 f.seek(start)
