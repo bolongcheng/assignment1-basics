@@ -1,6 +1,6 @@
 # Data paths
-train_data: data/train.bin
-val_data: data/val.bin
+train_data: data/tokens/tinystories-train.bin
+val_data: data/tokens/tinystories-val.bin
 
 # Model parameters
 vocab_size: 10000
