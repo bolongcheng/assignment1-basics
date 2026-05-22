@@ -46,5 +46,3 @@ resume_from: null
 # Misc
 device: cpu
 seed: 123
-
-

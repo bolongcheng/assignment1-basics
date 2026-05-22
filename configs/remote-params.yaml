@@ -1,6 +1,6 @@
 # Data paths
-train_path: data/tokens/tinystories-train-mini.bin
-valid_path: data/tokens/tinystories-val-mini.bin
+train_path: data/tokens/tinystories-train.bin
+valid_path: data/tokens/tinystories-val.bin
 
 # Model parameters
 vocab_size: 10000
@@ -13,36 +13,36 @@ rope_theta: 10000.0
 
 # Optimizer parameters
 learning_rate: 0.0001
-weight_decay: 0.0
+weight_decay: 0.1
 beta1: 0.9
 beta2: 0.95
 
 max_l2_norm: 1.0
 
-lr_min: 0.001
-lr_max: 0.001
-T_w: 0
-T_c: 1
+lr_min: 0.00003
+lr_max: 0.0003
+T_w: 800
+T_c: 38000
 
 # Training parameters
 batch_size: 32
-max_iters: 400
+max_iters: 40000
 
 # Logging and evaluation
-log_interval: 1
-activation_log_interval: 10
-wandb_project: "cs336-gpt-mini"
-wandb_run_name: "debug-run-async-eval"
+log_interval: 20
+activation_log_interval: 100
+wandb_project: "cs336-assignment1"
+wandb_run_name: "baseline"
 
 # Evaluation
-eval_interval: 50
+eval_interval: 200
 eval_num_batches: 50
 
 # Checkpointing
-checkpoint_interval: 1000
+checkpoint_interval: 5000
 checkpoint_dir: checkpoints
 resume_from: null
 
 # Misc
-device: cpu
+device: cuda
 seed: 123
