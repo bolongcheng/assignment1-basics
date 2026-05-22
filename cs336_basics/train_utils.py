@@ -16,9 +16,17 @@ def load_batch(
     data_len = len(dataset)
     rng = np.random.default_rng()
     starts = rng.integers(0, data_len - context_length, size=batch_size)
-    x = np.stack([dataset[i : i + context_length] for i in starts])
-    y = np.stack([dataset[i + 1 : i + 1 + context_length] for i in starts])
-    return (torch.tensor(x, dtype=torch.long, device=device), torch.tensor(y, dtype=torch.long, device=device))
+    x_np = np.stack([dataset[i : i + context_length] for i in starts]).astype(np.int64, copy=False)
+    y_np = np.stack([dataset[i + 1 : i + 1 + context_length] for i in starts]).astype(np.int64, copy=False)
+    x = torch.from_numpy(x_np)
+    y = torch.from_numpy(y_np)
+    if device == "cuda":
+        x = x.pin_memory().to(device, non_blocking=True)
+        y = y.pin_memory().to(device, non_blocking=True)
+    else:
+        x = x.to(device)
+        y = y.to(device)
+    return x, y
 
 
 class Checkpoint(TypedDict):
@@ -47,8 +55,9 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer,
 ) -> int:
 
-    obj: Checkpoint = torch.load(src)
-    model.load_state_dict(obj["model"])
+    obj: Checkpoint = torch.load(src, map_location="cpu")
+    state = {k.replace("_orig_mod.", ""): v for k, v in obj["model"].items()}
+    model.load_state_dict(state)
     optimizer.load_state_dict(obj["optimizer"])
 
     return obj["iteration"]
