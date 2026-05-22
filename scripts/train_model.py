@@ -1,4 +1,6 @@
 import argparse
+import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +18,9 @@ from cs336_basics.utils import cross_entropy, gradient_clipping
 from cs336_basics.wandb_logger import WandbLogger
 
 
-wandb.login()
 DEVICE_TO_DTYPE = {
-    "cuda": torch.float16,
-    "cpu": torch.float32,
+    "cuda": torch.bfloat16,
+    "cpu": torch.float16,
 }
 
 
@@ -34,7 +35,7 @@ def evaluate(
 ) -> float:
 
     model.eval()
-    total_loss = 0.0
+    total_loss = torch.zeros(1, device=device)
     for _ in range(num_batches):
         x, y = load_batch(
             dataset=dataset,
@@ -43,10 +44,10 @@ def evaluate(
             device=device,
         )
         pred = model(x)
-        total_loss += cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1)).item()
+        total_loss += cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1))
 
     model.train()
-    return total_loss / num_batches
+    return (total_loss / num_batches).item()
 
 
 def train_step(
@@ -93,10 +94,7 @@ def train(config: dict[str, Any]) -> None:
         device=device,
         dtype=DEVICE_TO_DTYPE[device],
     )
-    if device == "cpu":
-        model = torch.compile(model)
-    if device == "mps":
-        model = torch.compile(model, backend="aot_eager")
+    model = torch.compile(model)
 
     optimizer = AdamW(
         model.parameters(),
@@ -109,13 +107,13 @@ def train(config: dict[str, Any]) -> None:
     num_tokens_processed = 0
 
     if config["resume_from"] is not None:
-        print(f"Loading checkpoint from: {config['resume_from']}")
+        logging.info(f"Loading checkpoint from: {config['resume_from']}")
         start_iter = load_checkpoint(src=config["resume_from"], model=model, optimizer=optimizer)
-        print(f"Resumed from iteration {start_iter}")
+        logging.info(f"Resumed from iteration {start_iter}")
         num_tokens_processed = start_iter * config["batch_size"] * config["context_length"]
 
     wandb.init(project=config["wandb_project"], name=config["wandb_run_name"], config=config)
-    logger = WandbLogger(
+    wandb_logger = WandbLogger(
         model=model,
         optimizer=optimizer,
         log_interval=config["log_interval"],
@@ -125,52 +123,75 @@ def train(config: dict[str, Any]) -> None:
         num_tokens_processed=num_tokens_processed,
     )
 
-    for iter in tqdm(range(start_iter, config["max_iters"])):
-        train_batch = load_batch(
+    with ThreadPoolExecutor(max_workers=1) as data_pool, ThreadPoolExecutor(max_workers=1) as ckpt_pool:
+        pending_ckpt: Future | None = None
+        next_batch_future: Future = data_pool.submit(
+            load_batch,
             dataset=train_data,
             batch_size=config["batch_size"],
             context_length=config["context_length"],
             device=device,
         )
 
-        lr = lr_cosine_schedule(
-            lr_min=config["lr_min"],
-            lr_max=config["lr_max"],
-            iter=iter,
-            T_w=config["T_w"],
-            T_c=config["T_c"],
-        )
-        optimizer.param_groups[0]["lr"] = lr
-
-        train_loss = train_step(
-            model=model,
-            optimizer=optimizer,
-            batch=train_batch,
-            max_l2_norm=config["max_l2_norm"],
-        )
-
-        val_loss = None
-        if iter > 0 and iter % config["eval_interval"] == 0:
-            val_loss = evaluate(
-                model=model,
-                dataset=valid_data,
+        for iter in tqdm(range(start_iter, config["max_iters"])):
+            train_batch = next_batch_future.result()
+            next_batch_future = data_pool.submit(
+                load_batch,
+                dataset=train_data,
                 batch_size=config["batch_size"],
                 context_length=config["context_length"],
                 device=device,
-                num_batches=config["eval_num_batches"],
             )
 
-        logger.log_step(
-            train_loss=train_loss,
-            val_loss=val_loss,
-            batch_tokens=train_batch[0].numel(),
-        )
+            lr = lr_cosine_schedule(
+                lr_min=config["lr_min"],
+                lr_max=config["lr_max"],
+                iter=iter,
+                T_w=config["T_w"],
+                T_c=config["T_c"],
+            )
+            optimizer.param_groups[0]["lr"] = lr
 
-        if (iter > 0 and iter % config["checkpoint_interval"] == 0) or iter == config["max_iters"]:
-            ckpt_path = _make_checkpoint_path(config["checkpoint_dir"], iter)
-            save_checkpoint(model=model, optimizer=optimizer, iteration=iter, out=ckpt_path)
+            train_loss = train_step(
+                model=model,
+                optimizer=optimizer,
+                batch=train_batch,
+                max_l2_norm=config["max_l2_norm"],
+            )
 
-    logger.remove_hooks()
+            is_final_iter = iter == config["max_iters"] - 1
+            val_loss = None
+            if (iter > 0 and iter % config["eval_interval"] == 0) or is_final_iter:
+                val_loss = evaluate(
+                    model=model,
+                    dataset=valid_data,
+                    batch_size=config["batch_size"],
+                    context_length=config["context_length"],
+                    device=device,
+                    num_batches=config["eval_num_batches"],
+                )
+            wandb_logger.log_step(
+                train_loss=train_loss,
+                val_loss=val_loss,
+                batch_tokens=train_batch[0].numel(),
+            )
+
+            if (iter > 0 and iter % config["checkpoint_interval"] == 0) or is_final_iter:
+                if pending_ckpt is not None:
+                    pending_ckpt.result()
+                ckpt_path = _make_checkpoint_path(config["checkpoint_dir"], iter)
+                pending_ckpt = ckpt_pool.submit(
+                    save_checkpoint,
+                    model=model,
+                    optimizer=optimizer,
+                    iteration=iter,
+                    out=ckpt_path,
+                )
+
+        if pending_ckpt is not None:
+            pending_ckpt.result()
+
+    wandb_logger.remove_hooks()
     wandb.finish()
 
 
@@ -234,6 +255,9 @@ def merge_cli_overrides(config: dict[str, Any], args: argparse.Namespace) -> dic
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    wandb.login()
+
     parser = build_parser()
     args = parser.parse_args()
     config = load_yaml_config(args.config)
