@@ -1,0 +1,48 @@
+# Data paths
+train_path: data/tokens/tinystories-train-mini.bin
+valid_path: data/tokens/tinystories-val-mini.bin
+
+# Model parameters
+vocab_size: 10000
+context_length: 256
+num_layers: 4
+num_heads: 16
+d_model: 512
+d_ff: 1344
+rope_theta: 10000.0
+
+# Optimizer parameters
+learning_rate: 0.0001
+weight_decay: 0.0
+beta1: 0.9
+beta2: 0.95
+
+max_l2_norm: 1.0
+
+lr_min: 0.001
+lr_max: 0.001
+T_w: 0
+T_c: 1
+
+# Training parameters
+batch_size: 32
+max_iters: 400
+
+# Logging and evaluation
+log_interval: 1
+activation_log_interval: 10
+wandb_project: "cs336-gpt-mini"
+wandb_run_name: "debug-run-async-eval"
+
+# Evaluation
+eval_interval: 50
+eval_num_batches: 50
+
+# Checkpointing
+checkpoint_interval: 1000
+checkpoint_dir: checkpoints
+resume_from: null
+
+# Misc
+device: cpu
+seed: 123

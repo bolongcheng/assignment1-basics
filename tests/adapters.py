@@ -10,8 +10,23 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.bpe import train_bpe
+from cs336_basics.model import (
+    Embedding,
+    Linear,
+    MultiheadSelfAttention,
+    RMSNorm,
+    RotaryPositionalEmbedding,
+    SwiGLU,
+    Transformer,
+    TransformerLM,
+    scaled_dot_product_attention,
+    silu,
+    softmax,
+)
+from cs336_basics.optimizer import AdamW, lr_cosine_schedule
 from cs336_basics.tokenizer import Tokenizer
-from cs336_basics.transformer import *
+from cs336_basics.train_utils import load_batch, load_checkpoint, save_checkpoint
+from cs336_basics.utils import cross_entropy, gradient_clipping
 
 
 def run_linear(
@@ -206,12 +221,15 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-
+    rope = RotaryPositionalEmbedding(
+        theta=theta,
+        d_k=d_model // num_heads,
+        max_seq_len=max_seq_len,
+    )
     mhsa = MultiheadSelfAttention(
         d_model=d_model,
         num_heads=num_heads,
-        rope_theta=theta,
-        rope_max_seq_len=max_seq_len,
+        rope_embedding=rope,
     )
     mhsa.load_state_dict(
         {
@@ -321,12 +339,16 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
+    rope = RotaryPositionalEmbedding(
+        theta=theta,
+        d_k=d_model // num_heads,
+        max_seq_len=max_seq_len,
+    )
     tfmr = Transformer(
         d_model=d_model,
         num_heads=num_heads,
         d_ff=d_ff,
-        rope_theta=theta,
-        rope_max_seq_len=max_seq_len,
+        rope_embedding=rope,
     )
     tfmr.load_state_dict(
         {
@@ -518,7 +540,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return load_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -624,7 +646,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -645,7 +667,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(

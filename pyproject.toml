@@ -23,6 +23,7 @@ dependencies = [
 
 [dependency-groups]
 notebook = ["jupyter", "matplotlib"]
+modal = ["modal>=0.66"]
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12.0"]
@@ -51,3 +52,17 @@ line-length = 120
 [tool.ruff.lint]
 extend-select = ["UP"]
 ignore = ["F722"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["cs336_basics"]
+known-third-party = ["wandb"]
+lines-after-imports = 2
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+    "tests",
+]

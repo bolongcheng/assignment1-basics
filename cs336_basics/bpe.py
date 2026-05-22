@@ -1,13 +1,14 @@
-from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
 import json
 import os
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 
 import regex as re
 from tqdm import tqdm
 
 from cs336_basics.pretokenization_example import find_chunk_boundaries
 from tests.common import gpt2_bytes_to_unicode
+
 
 ENCODE_FMT = "utf-8"
 UTF8_VOCAB_SIZE = 256
