@@ -71,14 +71,15 @@ class AdamW(torch.optim.Optimizer):
                 m = state.get("m", torch.zeros_like(p.data))
                 v = state.get("v", torch.zeros_like(p.data))
                 grad = p.grad.data
-                p.data -= lr * weight_decay * p.data
                 m = beta1 * m + (1 - beta1) * grad
                 v = beta2 * v + (1 - beta2) * grad**2
-                p.data -= lr * (1 - beta2**t) ** 0.5 / (1 - beta1**t) * m / (v.sqrt() + eps)
+                update = lr * weight_decay * p.data + lr * (1 - beta2**t) ** 0.5 / (1 - beta1**t) * m / (v.sqrt() + eps)
+                p.data -= update
                 t += 1
                 state["m"] = m
                 state["v"] = v
                 state["t"] = t
+                state["last_update_norm"] = (update).detach().norm()
 
         return loss
 

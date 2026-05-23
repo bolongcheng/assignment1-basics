@@ -31,6 +31,16 @@ class WandbLogger:
         self.step_start_time = time.time()
         self._tokens_since_last_log = 0
 
+        # Instability tracking
+        self._loss_ema: float | None = None
+        self._grad_norm_ema: float | None = None
+        self._ema_alpha = 0.1
+        self._loss_spike_factor = 1.5
+        self._grad_spike_factor = 3.0
+        self.nan_inf_count = 0
+        self.loss_spike_count = 0
+        self.grad_spike_count = 0
+
         # stores activation norms, populated by forward hooks
         self._activation_norms: dict[str, float] = {}
         self._hooks = []
@@ -88,18 +98,69 @@ class WandbLogger:
     # ── Adam m/v estimates ──────────────────────────────────────────────────
 
     def _compute_adamw_metrics(self) -> dict:
-        """Logs mean of Adam's m (momentum) and v (variance) estimates per layer."""
+        """Logs mean of Adam's m (momentum) and v (variance) estimates per layer,
+        plus the estimated update-to-weight ratio."""
         logs = {}
         state = self.optimizer.state
+        total_update_sq = 0.0
+        total_weight_sq = 0.0
         for name, param in self.model.named_parameters():
-            if param in state and len(state[param]) > 0:
-                safe_name = name.replace(".", "/")
-                p_state = state[param]
-                if "m" in p_state:  # m estimate
-                    logs[f"adam_m/{safe_name}"] = p_state["m"].float().abs().mean().item()
-                if "v" in p_state:  # v estimate
-                    logs[f"adam_v/{safe_name}"] = p_state["v"].float().mean().item()
+            if param not in state or len(state[param]) == 0:
+                continue
+            safe_name = name.replace(".", "/")
+            p_state = state[param]
+            if "m" in p_state:
+                logs[f"adam_m/{safe_name}"] = p_state["m"].float().abs().mean().item()
+            if "v" in p_state:
+                logs[f"adam_v/{safe_name}"] = p_state["v"].float().mean().item()
+
+            if "last_update_norm" not in p_state:
+                continue
+            update_norm = p_state["last_update_norm"].item()
+            weight_norm = param.data.detach().float().norm().item()
+            if weight_norm > 1e-8:
+                logs[f"update_to_weight_ratio/{safe_name}"] = update_norm / weight_norm
+            total_update_sq += update_norm**2
+            total_weight_sq += weight_norm**2
+
+        if total_weight_sq > 1e-16:
+            logs["optim/update_to_weight_ratio_global"] = math.sqrt(total_update_sq) / math.sqrt(total_weight_sq)
         return logs
+
+    def _detect_instabilities(self, train_loss: float, global_grad_norm: float | None) -> dict:
+        flags = {
+            "instability/nan_or_inf": 0,
+            "instability/loss_spike": 0,
+            "instability/grad_spike": 0,
+        }
+
+        if not math.isfinite(train_loss):
+            self.nan_inf_count += 1
+            flags["instability/nan_or_inf"] = 1
+        else:
+            if self._loss_ema is not None and train_loss > self._loss_spike_factor * self._loss_ema:
+                self.loss_spike_count += 1
+                flags["instability/loss_spike"] = 1
+            self._loss_ema = (
+                train_loss
+                if self._loss_ema is None
+                else (1 - self._ema_alpha) * self._loss_ema + self._ema_alpha * train_loss
+            )
+
+        if global_grad_norm is not None and math.isfinite(global_grad_norm):
+            if self._grad_norm_ema is not None and global_grad_norm > self._grad_spike_factor * self._grad_norm_ema:
+                self.grad_spike_count += 1
+                flags["instability/grad_spike"] = 1
+            self._grad_norm_ema = (
+                global_grad_norm
+                if self._grad_norm_ema is None
+                else (1 - self._ema_alpha) * self._grad_norm_ema + self._ema_alpha * global_grad_norm
+            )
+
+        flags["instability/nan_inf_count"] = self.nan_inf_count
+        flags["instability/loss_spike_count"] = self.loss_spike_count
+        flags["instability/grad_spike_count"] = self.grad_spike_count
+        return flags
 
     def log_step(
         self,
@@ -114,38 +175,44 @@ class WandbLogger:
         step_time = time.time() - self.step_start_time
         self.step_start_time = time.time()
 
-        if self.step % self.log_interval != 0:
+        if self.step % self.log_interval != 0 and val_loss is None:
             return
 
         log_dict = {}
+        global_grad_norm: float | None = None
+        grad_logs: dict = {}
+
+        grad_logs, global_grad_norm = self._compute_grad_norms()
+        instability_logs = self._detect_instabilities(train_loss, global_grad_norm)
+
+        # Always log loss + instability flags every step so sweeps can compare
+        # runs at the same step budget and NaN/inf events are not silently dropped.
+        log_dict = {
+            "train/loss": train_loss,
+            "train/perplexity": math.exp(min(train_loss, 20)) if math.isfinite(train_loss) else float("inf"),
+            **instability_logs,
+        }
 
         # ── Loss & perplexity ──────────────────────────────────────────────
         log_dict["train/loss"] = train_loss
-        log_dict["train/perplexity"] = math.exp(min(train_loss, 20))
+        log_dict["train/perplexity"] = math.exp(min(train_loss, 20)) if math.isfinite(train_loss) else float("inf")
         if val_loss is not None:
             log_dict["val/loss"] = val_loss
-            log_dict["val/perplexity"] = math.exp(min(val_loss, 20))
+            log_dict["val/perplexity"] = math.exp(min(val_loss, 20)) if math.isfinite(val_loss) else float("inf")
 
         # ── Learning rate ──────────────────────────────────────────────────
         log_dict["optim/lr"] = self.optimizer.param_groups[0]["lr"]
 
         # ── Gradient norms ─────────────────────────────────────────────────
-        grad_logs, global_grad_norm = self._compute_grad_norms()
         log_dict.update(grad_logs)
         log_dict["optim/grad_norm_global"] = global_grad_norm
-
-        # Track gradient clipping frequency
-        if global_grad_norm > self.grad_clip_threshold:
+        if global_grad_norm is not None and global_grad_norm > self.grad_clip_threshold:
             self.grad_clip_count += 1
         log_dict["optim/grad_clip_pct"] = self.grad_clip_count / self.step
 
         # ── Weight norms & update-to-weight ratios ─────────────────────────
-        weight_logs = self._compute_weight_metrics()
-        log_dict.update(weight_logs)
-
-        # ── Adam optimizer internals (m, v estimates) ──────────────────────
-        adam_logs = self._compute_adamw_metrics()
-        log_dict.update(adam_logs)
+        log_dict.update(self._compute_weight_metrics())
+        log_dict.update(self._compute_adamw_metrics())
 
         # ── Activation norms (captured by forward hooks) ───────────────────
         if not skip_activation_log and self.step % self.activation_log_interval == 0:
