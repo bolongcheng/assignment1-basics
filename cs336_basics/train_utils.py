@@ -12,9 +12,11 @@ def load_batch(
     batch_size: int,
     context_length: int,
     device: str,
+    rng: np.random.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     data_len = len(dataset)
-    rng = np.random.default_rng()
+    if rng is None:
+        rng = np.random.default_rng()
     starts = rng.integers(0, data_len - context_length, size=batch_size)
     x_np = np.stack([dataset[i : i + context_length] for i in starts]).astype(np.int64, copy=False)
     y_np = np.stack([dataset[i + 1 : i + 1 + context_length] for i in starts]).astype(np.int64, copy=False)
