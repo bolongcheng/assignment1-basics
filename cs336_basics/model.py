@@ -111,6 +111,24 @@ class SwiGLU(nn.Module):
         return self.W_down(up * gate)
 
 
+class SwiLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.d_ff = d_ff or 4 * d_model
+        self.W_up = Linear(self.d_model, self.d_ff, device=device, dtype=dtype)
+        self.W_down = Linear(self.d_ff, self.d_model, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.W_down(silu(self.W_up(x)))
+
+
 class RotaryPositionalEmbedding(nn.Module):
     def __init__(
         self,
