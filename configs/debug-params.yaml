@@ -12,17 +12,17 @@ d_ff: 1344
 rope_theta: 10000.0
 
 # Optimizer parameters
-learning_rate: 0.0001
 weight_decay: 0.0
 beta1: 0.9
 beta2: 0.95
 
 max_l2_norm: 1.0
 
-lr_min: 0.001
+# scheduler parameters
 lr_max: 0.001
-T_w: 0
-T_c: 1
+lr_min_ratio: 1.0
+warmup_pct: -1
+cooldown_pct: -1
 
 # Training parameters
 batch_size: 32
