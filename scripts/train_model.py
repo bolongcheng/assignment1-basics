@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import numpy.typing as npt
 import torch
 import torch.nn as nn
@@ -20,8 +21,11 @@ from cs336_basics.wandb_logger import WandbLogger
 
 DEVICE_TO_DTYPE = {
     "cuda": torch.bfloat16,
-    "cpu": torch.float16,
+    "cpu": torch.float32,
 }
+
+
+EVAL_SEED = 23
 
 
 @torch.no_grad()
@@ -35,19 +39,58 @@ def evaluate(
 ) -> float:
 
     model.eval()
+    rng = np.random.default_rng(EVAL_SEED)
     total_loss = torch.zeros(1, device=device)
     for _ in range(num_batches):
         x, y = load_batch(
             dataset=dataset,
-            batch_size=batch_size,
+            batch_size=batch_size * 4,
             context_length=context_length,
             device=device,
+            rng=rng,
         )
         pred = model(x)
         total_loss += cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1))
 
     model.train()
     return (total_loss / num_batches).item()
+
+
+@torch.no_grad()
+def evaluate_full(
+    model: nn.Module,
+    dataset: npt.NDArray,
+    batch_size: int,
+    context_length: int,
+    device: str,
+) -> float:
+    batch_size = batch_size * 4
+    model.eval()
+    n_windows = (len(dataset) - 1) // context_length
+    starts = np.arange(n_windows, dtype=np.int64) * context_length
+
+    total_loss = torch.zeros(1, device=device)
+    total_tokens = 0
+    for i in range(0, n_windows, batch_size):
+        batch_starts = starts[i : i + batch_size]
+        x_np = np.stack([dataset[s : s + context_length] for s in batch_starts]).astype(np.int64, copy=False)
+        y_np = np.stack([dataset[s + 1 : s + 1 + context_length] for s in batch_starts]).astype(np.int64, copy=False)
+        x = torch.from_numpy(x_np)
+        y = torch.from_numpy(y_np)
+        if device == "cuda":
+            x = x.pin_memory().to(device, non_blocking=True)
+            y = y.pin_memory().to(device, non_blocking=True)
+        else:
+            x = x.to(device)
+            y = y.to(device)
+        pred = model(x)
+        loss = cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1))
+        ntok = y.numel()
+        total_loss += loss * ntok
+        total_tokens += ntok
+
+    model.train()
+    return (total_loss / total_tokens).item()
 
 
 def train_step(
@@ -77,6 +120,21 @@ def _make_checkpoint_path(checkpoint_dir: str, iter: int) -> Path:
     return ckpt_dir / f"checkpoint_{iter}.pt"
 
 
+# Hyperparameters that may be overridden by a W&B sweep agent via wandb.config.
+# When running under `wandb agent`, wandb.init() will populate wandb.config from the
+# sweep; we then mirror those values back into our local config dict so the rest of
+# the training loop does not need to know about sweeps.
+_SWEEPABLE_KEYS = ("lr_max", "warmup_pct", "lr_min_ratio", "cooldown_pct", "max_iters")
+
+
+def _apply_wandb_sweep_overrides(config: dict[str, Any]) -> dict[str, Any]:
+    sweep_cfg = dict(wandb.config)
+    for key in _SWEEPABLE_KEYS:
+        if key in sweep_cfg and sweep_cfg[key] is not None:
+            config[key] = sweep_cfg[key]
+    return config
+
+
 def train(config: dict[str, Any]) -> None:
     device = config["device"]
 
@@ -98,7 +156,7 @@ def train(config: dict[str, Any]) -> None:
 
     optimizer = AdamW(
         model.parameters(),
-        lr=config["learning_rate"],
+        lr=config["lr_max"],
         betas=(config["beta1"], config["beta2"]),
         weight_decay=config["weight_decay"],
     )
@@ -112,7 +170,9 @@ def train(config: dict[str, Any]) -> None:
         logging.info(f"Resumed from iteration {start_iter}")
         num_tokens_processed = start_iter * config["batch_size"] * config["context_length"]
 
-    wandb.init(project=config["wandb_project"], name=config["wandb_run_name"], config=config)
+    wandb.init(project=config["wandb_project"], name=config.get("wandb_run_name"), config=config)
+    config = _apply_wandb_sweep_overrides(config)
+    wandb.config.update(config, allow_val_change=True)
     wandb_logger = WandbLogger(
         model=model,
         optimizer=optimizer,
@@ -144,11 +204,11 @@ def train(config: dict[str, Any]) -> None:
             )
 
             lr = lr_cosine_schedule(
-                lr_min=config["lr_min"],
+                lr_min=config["lr_min_ratio"] * config["lr_max"],
                 lr_max=config["lr_max"],
                 iter=iter,
-                T_w=config["T_w"],
-                T_c=config["T_c"],
+                T_w=int(config["warmup_pct"] * config["max_iters"]),
+                T_c=int(config["cooldown_pct"] * config["max_iters"]),
             )
             optimizer.param_groups[0]["lr"] = lr
 
@@ -161,7 +221,15 @@ def train(config: dict[str, Any]) -> None:
 
             is_final_iter = iter == config["max_iters"] - 1
             val_loss = None
-            if (iter > 0 and iter % config["eval_interval"] == 0) or is_final_iter:
+            if is_final_iter:
+                val_loss = evaluate_full(
+                    model=model,
+                    dataset=valid_data,
+                    batch_size=config["batch_size"],
+                    context_length=config["context_length"],
+                    device=device,
+                )
+            elif iter > 0 and iter % config["eval_interval"] == 0:
                 val_loss = evaluate(
                     model=model,
                     dataset=valid_data,
@@ -176,7 +244,8 @@ def train(config: dict[str, Any]) -> None:
                 batch_tokens=train_batch[0].numel(),
             )
 
-            if (iter > 0 and iter % config["checkpoint_interval"] == 0) or is_final_iter:
+            ckpt_interval = config.get("checkpoint_interval") or 0
+            if ckpt_interval > 0 and ((iter > 0 and iter % ckpt_interval == 0) or is_final_iter):
                 if pending_ckpt is not None:
                     pending_ckpt.result()
                 ckpt_path = _make_checkpoint_path(config["checkpoint_dir"], iter)
@@ -210,15 +279,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rope_theta", type=float)
 
     # Optimizer parameters
-    parser.add_argument("--learning_rate", type=float)
     parser.add_argument("--beta1", type=float)
     parser.add_argument("--beta2", type=float)
     parser.add_argument("--weight_decay", type=float)
     parser.add_argument("--max_l2_norm", type=float)
-    parser.add_argument("--lr_min", type=float)
     parser.add_argument("--lr_max", type=float)
-    parser.add_argument("--T_w", type=int)
-    parser.add_argument("--T_c", type=int)
+    parser.add_argument("--lr_min_ratio", type=float)
+    parser.add_argument("--warmup_pct", type=int)
+    parser.add_argument("--cooldown_pct", type=int)
 
     # Training parameters
     parser.add_argument("--batch_size", type=int)
