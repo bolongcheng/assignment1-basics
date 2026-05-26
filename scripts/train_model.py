@@ -13,7 +13,7 @@ import yaml
 from tqdm import tqdm
 
 from cs336_basics.model import TransformerLM
-from cs336_basics.optimizer import AdamW, lr_cosine_schedule
+from cs336_basics.optimizer import AdamW, lr_cosine_schedule, lr_trapezoidal_schedule
 from cs336_basics.train_utils import load_batch, load_checkpoint, load_dataset, save_checkpoint
 from cs336_basics.utils import cross_entropy, gradient_clipping
 from cs336_basics.wandb_logger import WandbLogger
@@ -64,8 +64,9 @@ def evaluate_full(
     context_length: int,
     device: str,
 ) -> float:
-    batch_size = batch_size * 4
     model.eval()
+    if device == "cuda":
+        torch.cuda.empty_cache()
     n_windows = (len(dataset) - 1) // context_length
     starts = np.arange(n_windows, dtype=np.int64) * context_length
 
@@ -75,14 +76,8 @@ def evaluate_full(
         batch_starts = starts[i : i + batch_size]
         x_np = np.stack([dataset[s : s + context_length] for s in batch_starts]).astype(np.int64, copy=False)
         y_np = np.stack([dataset[s + 1 : s + 1 + context_length] for s in batch_starts]).astype(np.int64, copy=False)
-        x = torch.from_numpy(x_np)
-        y = torch.from_numpy(y_np)
-        if device == "cuda":
-            x = x.pin_memory().to(device, non_blocking=True)
-            y = y.pin_memory().to(device, non_blocking=True)
-        else:
-            x = x.to(device)
-            y = y.to(device)
+        x = torch.from_numpy(x_np).to(device, non_blocking=True)
+        y = torch.from_numpy(y_np).to(device, non_blocking=True)
         pred = model(x)
         loss = cross_entropy(pred.view(-1, pred.shape[-1]), y.view(-1))
         ntok = y.numel()
@@ -117,7 +112,7 @@ def train_step(
 def _make_checkpoint_path(checkpoint_dir: str, iter: int) -> Path:
     ckpt_dir = Path(checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    return ckpt_dir / f"checkpoint_{iter}.pt"
+    return ckpt_dir / f"owt_checkpoint_{iter}.pt"
 
 
 # Hyperparameters that may be overridden by a W&B sweep agent via wandb.config.
@@ -151,6 +146,8 @@ def train(config: dict[str, Any]) -> None:
         rope_theta=config["rope_theta"],
         device=device,
         dtype=DEVICE_TO_DTYPE[device],
+        tie_word_embeddings=config.get("tie_word_embeddings", False),
+        use_qk_norm=config.get("use_qk_norm", False),
     )
     model = torch.compile(model)
 
@@ -203,13 +200,23 @@ def train(config: dict[str, Any]) -> None:
                 device=device,
             )
 
-            lr = lr_cosine_schedule(
-                lr_min=config["lr_min_ratio"] * config["lr_max"],
-                lr_max=config["lr_max"],
-                iter=iter,
-                T_w=int(config["warmup_pct"] * config["max_iters"]),
-                T_c=int(config["cooldown_pct"] * config["max_iters"]),
-            )
+            if config.get("scheduler_type") == "trapezoidal":
+                lr = lr_trapezoidal_schedule(
+                    lr_max=config["lr_max"],
+                    iter=iter,
+                    T_w=int(config["warmup_pct"] * config["max_iters"]),
+                    T_c=int(config["cooldown_pct"] * config["max_iters"]),
+                    max_iters=config["max_iters"],
+                )
+            else:
+                lr = lr_cosine_schedule(
+                    lr_min=config["lr_min_ratio"] * config["lr_max"],
+                    lr_max=config["lr_max"],
+                    iter=iter,
+                    T_w=int(config["warmup_pct"] * config["max_iters"]),
+                    T_c=int(config["cooldown_pct"] * config["max_iters"]),
+                )
+
             optimizer.param_groups[0]["lr"] = lr
 
             train_loss = train_step(
