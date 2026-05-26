@@ -98,3 +98,13 @@ def lr_cosine_schedule(
         return lr_min + 0.5 * (1 + math.cos((iter - T_w) / (T_c - T_w) * math.pi)) * (lr_max - lr_min)
 
     return lr_min
+
+
+def lr_trapezoidal_schedule(lr_max: float, iter: int, T_w: int, T_c: int, max_iters: int) -> float:
+    if iter < T_w:
+        return iter * lr_max / T_w
+
+    if T_w <= iter <= T_c:
+        return lr_max
+
+    return lr_max * (1 - math.sqrt((iter - T_c) / (max_iters - T_c)))
