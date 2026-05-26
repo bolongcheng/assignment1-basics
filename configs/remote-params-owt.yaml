@@ -1,12 +1,12 @@
 # Data paths
-train_path: data/tokens/tinystories-train.bin
-valid_path: data/tokens/tinystories-val.bin
+train_path: data/tokens/owt-train.bin
+valid_path: data/tokens/owt-val.bin
 
 # Model parameters
-vocab_size: 10000
-context_length: 256
+vocab_size: 32000
+context_length: 512
 num_layers: 4
-num_heads: 8
+num_heads: 16
 d_model: 512
 d_ff: 1344
 rope_theta: 10000.0
@@ -26,20 +26,20 @@ cooldown_pct: 0.8
 
 # Training parameters
 batch_size: 128
-max_iters: 10000
+max_iters: 7500
 
 # Logging and evaluation
 log_interval: 20
-activation_log_interval: 400
-wandb_project: "cs336-assignment1-ablation"
-wandb_run_name: "weight_tying_8head_trapezoidal_lr0.006_bs128"
+activation_log_interval: 100
+wandb_project: "cs336-assignment-owt"
+wandb_run_name: "weight_tying_trapezoidal_lr0.006_bs128"
 
 # Evaluation
 eval_interval: 400
 eval_num_batches: 200
 
 # Checkpointing
-checkpoint_interval: 100000
+checkpoint_interval: 10000
 checkpoint_dir: checkpoints
 resume_from: null
 
