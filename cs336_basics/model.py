@@ -77,7 +77,7 @@ class RMSNorm(nn.Module):
         # NOTE(einops): reduce(x**2, "batch_size seq_length d_model -> batch_size seq_length 1", "sum")
         # NOTE(einsum): torch.einsum("bsd -> bs", x**2).unsqueeze(-1)
 
-        rms = torch.sqrt(torch.sum(x**2, dim=2, keepdim=True) / self.d_model + self.eps)
+        rms = torch.sqrt(torch.mean(x**2, dim=2, keepdim=True) + self.eps)
         result = x / rms * self.gain
 
         return result.to(in_dtype)
@@ -180,7 +180,9 @@ def scaled_dot_product_attention(
     K: torch.Tensor,
     V: torch.Tensor,
     mask: torch.Tensor,
-) -> torch.Tensor:
+    *,
+    return_attn: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     # Q, K: (batch_size, .., seq_len, d_k)
     # V: (batch_size, ..., seq_len, d_v)
     # mask: (seq_len, seq_len)
@@ -189,7 +191,28 @@ def scaled_dot_product_attention(
     # NOTE(einops): einsum(Q, K, "batch_size ... seq_len_q d_k, batch_size ... seq_len_k d_k -> batch_size ... seq_len_q seq_len_k")
     # NOTE(einsum): torch.einsum("b...qd,b...kd -> b...qk", Q, K) / d_k**0.5
     wei = Q @ K.transpose(-2, -1) / d_k**0.5
-    return softmax(wei.masked_fill(mask, float("-inf")), dim=-1) @ V
+    probs = softmax(wei.masked_fill(mask, float("-inf")), dim=-1)
+    out = probs @ V
+    if return_attn:
+        return out, probs
+    return out
+
+
+class HeadwiseRMSNorm(nn.Module):
+    def __init__(self, num_heads: int, d_head: int, eps: float = 1e-4, device=None, dtype=None) -> None:
+        super().__init__()
+        self.eps = eps
+        self.gain = nn.Parameter(torch.ones(num_heads, d_head, device=device, dtype=dtype))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (..., num_heads, seq_len, d_head)
+        # out: (..., num_heads, seq_len, d_head)
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        rms = torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True) + self.eps)
+        result = x / rms * self.gain.unsqueeze(-2)
+        return result.to(in_dtype)
 
 
 class MultiheadSelfAttention(nn.Module):
@@ -200,6 +223,8 @@ class MultiheadSelfAttention(nn.Module):
         rope_embedding: RotaryPositionalEmbedding | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        *,
+        use_qk_norm: bool = False,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -210,8 +235,17 @@ class MultiheadSelfAttention(nn.Module):
         self.W_k = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
         self.W_v = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
         self.W_o = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
+        self.use_qk_norm = use_qk_norm
+        if self.use_qk_norm:
+            self.q_norms = HeadwiseRMSNorm(num_heads, self.d_k, device=device, dtype=dtype)
+            self.k_norms = HeadwiseRMSNorm(num_heads, self.d_k, device=device, dtype=dtype)
         self.rope = rope_embedding
         self._causal_mask: torch.Tensor | None = None
+        # Optional caching of attention probabilities and per-head SDPA output
+        # for analysis (e.g. head redundancy). Disabled by default.
+        self.capture_internals: bool = False
+        self._last_attn_probs: torch.Tensor | None = None
+        self._last_head_output: torch.Tensor | None = None
 
     def _split_heads(self, x: torch.Tensor, num_heads: int, head_dim: int) -> torch.Tensor:
         return x.view(*x.shape[:-1], num_heads, head_dim).transpose(-3, -2)
@@ -228,18 +262,32 @@ class MultiheadSelfAttention(nn.Module):
         Q_heads = self._split_heads(self.W_q(x), self.num_heads, self.d_k)
         K_heads = self._split_heads(self.W_k(x), self.num_heads, self.d_k)
         V_heads = self._split_heads(self.W_v(x), self.num_heads, self.d_v)
+        if self.use_qk_norm:
+            Q_heads = self.q_norms(Q_heads)
+            K_heads = self.k_norms(K_heads)
         if self.rope:
             Q_heads = self.rope(Q_heads, token_positions=token_positions)
             K_heads = self.rope(K_heads, token_positions=token_positions)
         if self._causal_mask is None or self._causal_mask.size(-1) < seq_len or self._causal_mask.device != x.device:
             self._causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool), diagonal=1)
         mask = self._causal_mask[:seq_len, :seq_len]
-        att = scaled_dot_product_attention(
-            Q=Q_heads,
-            K=K_heads,
-            V=V_heads,
-            mask=mask,
-        )
+        if self.capture_internals:
+            att, probs = scaled_dot_product_attention(
+                Q=Q_heads,
+                K=K_heads,
+                V=V_heads,
+                mask=mask,
+                return_attn=True,
+            )
+            self._last_attn_probs = probs.detach()
+            self._last_head_output = att.detach()
+        else:
+            att = scaled_dot_product_attention(
+                Q=Q_heads,
+                K=K_heads,
+                V=V_heads,
+                mask=mask,
+            )
         return self.W_o(self._merge_heads(att))
 
 
@@ -252,6 +300,8 @@ class Transformer(nn.Module):
         rope_embedding: RotaryPositionalEmbedding | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        *,
+        use_qk_norm: bool = False,
     ) -> None:
         super().__init__()
         self.ln1 = RMSNorm(d_model=d_model, eps=1e-5, device=device)
@@ -262,6 +312,7 @@ class Transformer(nn.Module):
             rope_embedding=rope_embedding,
             device=device,
             dtype=dtype,
+            use_qk_norm=use_qk_norm,
         )
         self.swiglu = SwiGLU(
             d_model=d_model,
@@ -298,6 +349,9 @@ class TransformerLM(nn.Module):
         rope_theta: float = 10000,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        *,
+        tie_word_embeddings: bool = False,
+        use_qk_norm: bool = False,
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -323,12 +377,17 @@ class TransformerLM(nn.Module):
                     rope_embedding=self.rope,
                     device=device,
                     dtype=dtype,
+                    use_qk_norm=use_qk_norm,
                 )
                 for _ in range(num_layers)
             ]
         )
         self.ln = RMSNorm(d_model=d_model, device=device)
         self.ff = Linear(in_features=d_model, out_features=vocab_size, device=device, dtype=dtype)
+        if tie_word_embeddings:
+            self.ff.W = self.embedding.E
+            sigma = d_model**-0.5
+            nn.init.trunc_normal_(self.ff.W, mean=0, std=sigma, a=-3 * sigma, b=3 * sigma)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
         x = self.embedding(x)
